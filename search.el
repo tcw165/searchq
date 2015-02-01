@@ -33,14 +33,48 @@
 ;;
 ;;; Code:
 
-;; GNU Library.
+;; GNU library.
+
+;; 3rd party libary.
+(require 'deferred)
 
 (defgroup search nil
-  “Search.”)
+  "Search")
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Common ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defcustom search-exec-path "grep"
+  "Path of search tool. Default is GREP."
+  :type 'string
+  :group 'search)
 
+(defcustom search-tasks-max 5
+  "Maximum length of the task queue."
+  :type 'integer
+  :group 'search)
 
-(provide ‘search)
+(defvar search-tasks nil
+  "Task queue.")
+
+(defun search-exec? ()
+  (with-temp-buffer
+    (= 0 (call-process-shell-command
+          (concat "which " search-exec-path)
+          nil (list (current-buffer) nil)))))
+
+;;;###autoload
+(defun search-start-search (&optional regexp files)
+  "FILES format:
+  (:dir (A B C ...)
+   :files (1 2 3 ...)
+   :input FILE)
+"
+  (interactive)
+  )
+;; deferred:queue
+
+;;;###autoload
+(defun search-toggle-search-result ()
+  (interactive)
+  )
+
+(provide 'search)
 ;;; search.el ends here

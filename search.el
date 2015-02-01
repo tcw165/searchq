@@ -42,7 +42,12 @@
   "Search")
 
 (defcustom search-exec-path "grep"
-  "Path of search tool. Default is GREP."
+  "Search tool name. Default is GREP."
+  :type 'string
+  :group 'search)
+
+(defcustom search-cached-file "~/.emacs.d/.search"
+  "File path of cached search result."
   :type 'string
   :group 'search)
 
@@ -60,21 +65,42 @@
           (concat "which " search-exec-path)
           nil (list (current-buffer) nil)))))
 
+(defun search-buffer ()
+  "Get search buffer and refresh its content."
+  (let ((name (file-name-nondirectory search-cached-file)))
+    (with-current-buffer (get-buffer-create name)
+      (erase-buffer)
+      (when (file-exists-p search-cached-file)
+        (insert-file-contents-literally search-cached-file))
+      (set-buffer-modified-p nil))))
+
+(defmacro search-with-buffer (&rest body)
+  "Evaluate BODY in the search result buffer."
+  (declare (indent 0) (debug t))
+  `(with-current-buffer (search-buffer)
+     (prog1
+         (progn ,@body)
+       (when (buffer-modified-p)
+         (save-buffer)))))
+
 ;;;###autoload
-(defun search-start-search (&optional regexp files)
+(defun search-start-search (&optional regexp arg)
   "FILES format:
-  (:dir (A B C ...)
+  (:dirs (A B C ...)
    :files (1 2 3 ...)
-   :input FILE)
-"
+   :input FILE)"
   (interactive)
   )
 ;; deferred:queue
+;; (deferred:process)
 
 ;;;###autoload
 (defun search-toggle-search-result ()
   (interactive)
-  )
+  (if (string= buffer-file-name search-cached-file)
+      ;; TODO: Kill buffer without asking.
+      (kill-buffer)
+    (set-window-buffer (selected-window) (search-buffer))))
 
 (provide 'search)
 ;;; search.el ends here

@@ -43,6 +43,7 @@
 
 (defcustom search-exec-path "grep"
   "Search tool name. Default is GREP."
+  ;; TODO: ack, ag alternative.
   :type 'string
   :group 'search)
 

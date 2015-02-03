@@ -34,6 +34,7 @@
 ;;; Code:
 
 ;; GNU library.
+(require 'ido)
 
 ;; 3rd party libary.
 (require 'deferred)
@@ -41,10 +42,12 @@
 (defgroup search nil
   "Search")
 
-(defcustom search-exec-path "grep"
+(defcustom search-exec "grep"
   "Search tool name. Default is GREP."
-  ;; TODO: ack, ag alternative.
-  :type 'string
+  :type '(choice (const :tag "grep" "grep")
+                 (const :tag "ack" "ack")
+                 (const :tag "ag" "ag")
+                 (string :tag "User defined"))
   :group 'search)
 
 (defcustom search-cached-file "~/.emacs.d/.search"
@@ -57,13 +60,18 @@
   :type 'integer
   :group 'search)
 
+(defconst search-params '(("grep" . "")
+                          ("ack" . "")
+                          ("ag" . ""))
+  )
+
 (defvar search-tasks nil
   "Task queue.")
 
 (defun search-exec? ()
   (with-temp-buffer
     (= 0 (call-process-shell-command
-          (concat "which " search-exec-path)
+          (concat "which " search-exec)
           nil (list (current-buffer) nil)))))
 
 (defun search-buffer ()
@@ -85,13 +93,29 @@
          (save-buffer)))))
 
 ;;;###autoload
-(defun search-start-search (&optional regexp arg)
+(defun search-start-search (&optional regexp &rest args)
   "FILES format:
   (:dirs (A B C ...)
    :files (1 2 3 ...)
    :input FILE)"
-  (interactive)
-  )
+  (interactive
+   (let* ((ans (ido-completing-read "Search current file or directory? "
+                                    '("file" "directory") nil t))
+          (args (cond
+                 ((equal ans "file")
+                  (list :files (buffer-file-name)))
+                 ((equal ans "directory")
+                  (list :dirs (file-name-directory (buffer-file-name)))))))
+     (push (read-from-minibuffer "Search: ") args)))
+  (if (< (length deferred:queue) search-tasks-max)
+      (deferred:$
+        (deferred:process)
+        (deferred:nextc it
+          (lambda (x)
+            (ido-completing-read "Search is done, show or not? "
+                                 '("yes" "not") nil t)
+            )))
+    (message "Search queue is full (max %s), please wait." search-tasks-max)))
 ;; deferred:queue
 ;; (deferred:process)
 

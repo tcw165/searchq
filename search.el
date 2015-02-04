@@ -42,17 +42,37 @@
 (defgroup search nil
   "Search")
 
-(defcustom search-exec "grep"
+(defconst search-default-commands '(("grep" . search-grep-cmd-gen)
+                                    ("ack" . search-ack-cmd-gen)
+                                    ;; ("ag" . search-ag-cmd-gen)
+                                    )
+  "Default alist of searching commands.")
+
+(defcustom search-command (nth 0 search-default-commands)
   "Search tool name. Default is GREP."
-  :type '(choice (const :tag "grep" "grep")
-                 (const :tag "ack" "ack")
-                 (const :tag "ag" "ag")
-                 (string :tag "User defined"))
+  :type `(choice ,@(mapcar (lambda (c)
+                             `(const :tag ,(car c) ,(car c) ,(cdr c)))
+                           search-default-commands)
+                 (cons :tag "user defined"
+                       (match :tag "exec name"
+                               "dummy")
+                       (function :tag "command generator function"
+                                 search-dummy-cmd-gen)))
   :group 'search)
 
-(defcustom search-cached-file "~/.emacs.d/.search"
-  "File path of cached search result."
-  :type 'string
+(defcustom search-print-function 'search-default-print
+  "Function of printing search result."
+  :type 'function
+  :group 'search)
+
+(defcustom search-result (expand-file-name "~/.emacs.d/.search")
+  "File for cached search result."
+  :type 'match
+  :group 'search)
+
+(defcustom search-input-file "/var/tmp/.search-input-file"
+  "File for input files list of search tool."
+  :type 'match
   :group 'search)
 
 (defcustom search-tasks-max 5
@@ -60,72 +80,199 @@
   :type 'integer
   :group 'search)
 
-(defconst search-params '(("grep" . "")
-                          ("ack" . "")
-                          ("ag" . ""))
-  )
+(defcustom search-delimiter '(">>>>>" . "<<<<<")
+  "Maximum length of the task queue."
+  :type '(cons (match :tag "open delimiter")
+               (match :tag "close delimiter"))
+  :group 'search)
 
-(defvar search-tasks nil
-  "Task queue.")
+(defvar search-tasks 0
+  "Task counter.")
 
 (defun search-exec? ()
-  (with-temp-buffer
-    (= 0 (call-process-shell-command
-          (concat "which " search-exec)
-          nil (list (current-buffer) nil)))))
+  (unless (and (executable-find "sh")
+               (executable-find "find")
+               (executable-find "xargs")
+               (executable-find (car search-command)))
+    (error "%s or xargs is not supported on your system!" (car search-command))))
 
 (defun search-buffer ()
   "Get search buffer and refresh its content."
-  (let ((name (file-name-nondirectory search-cached-file)))
+  (let ((name (file-name-nondirectory search-result)))
     (with-current-buffer (get-buffer-create name)
       (erase-buffer)
-      (when (file-exists-p search-cached-file)
-        (insert-file-contents-literally search-cached-file))
-      (set-buffer-modified-p nil))))
+      ;; Insert content from cached file.
+      (when (file-exists-p search-result)
+        (insert-file-contents-literally search-result))
+      ;; Make buffer unmodified
+      (set-buffer-modified-p nil)
+      ;; Set buffer file name.
+      (setq buffer-file-name (expand-file-name search-result))
+      (current-buffer))))
 
-(defmacro search-with-buffer (&rest body)
-  "Evaluate BODY in the search result buffer."
-  (declare (indent 0) (debug t))
-  `(with-current-buffer (search-buffer)
-     (prog1
-         (progn ,@body)
-       (when (buffer-modified-p)
-         (save-buffer)))))
+(defmacro search-with-inputfile (filename &rest body)
+  "Export `data' to `filename' file.."
+  (declare (indent 1) (debug t))
+  `(when (file-writable-p ,filename)
+     (with-temp-file ,filename
+       (and (file-exists-p ,filename)
+            (insert-file-contents-literally ,filename))
+       (progn ,@body))))
+
+(defun search-default-print (inputfile match result)
+  (setq search-tasks (1- search-tasks))
+  ;; Delete inputfile.
+  (and (file-exists-p inputfile)
+       (delete-file inputfile))
+  ;; Print.
+  (with-current-buffer (search-buffer)
+    (goto-char (point-max))
+    (insert "\n"
+            (car search-delimiter) " " match "\n"
+            result
+            (cdr search-delimiter) "\n")
+    (save-buffer))
+  (message "deferred:queue=%s" (length deferred:queue))
+  ;; (message "Search done, call `search-toggle-search-result' to open it.")
+  )
+
+(defun search-seralize-list (thing)
+  (cond
+   ;; A list of strings ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+   ((listp thing)
+    (let ((it thing)
+          (space "")
+          str)
+      (while it
+        (ignore-errors
+          (setq str (concat str
+                            space
+                            (car it))))
+        (setq it (cdr it)
+              space " "))
+      str))
+   ;; A match ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+   ((stringp thing)
+    thing)))
+
+(defun search-dummy-cmd-gen (inputfile match)
+  "See `search-thing'."
+  )
+
+(defun search-grep-cmd-gen (inputfile match)
+  "See `search-thing'."
+  (format "grep -nH --file=%s %s 2>/dev/null" inputfile match))
+;; deferred:queue
+;; (progn
+;;   (search-string "process" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "process" :files (expand-file-name "~/.emacs.d/oops/.emacs"))
+;;   (search-string "search" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "qu" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "def" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "var" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "defun" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "highlight" :dirs (expand-file-name "~/.emacs.d/oops"))
+;;   (search-string "anything" :dirs (expand-file-name "~/.emacs.d/oops")))
+
+(defun search-ack-cmd-gen (inputfile match filters)
+  "See `search-thing'."
+  )
+
+;; (defun search-ag-cmd-gen (match &optional filters)
+;;   )
 
 ;;;###autoload
-(defun search-start-search (&optional regexp &rest args)
+(defun search-string (&optional match &rest args)
   "FILES format:
-  (:dirs (A B C ...)
-   :files (1 2 3 ...)
-   :input FILE)"
+  (:files (1 2 3 ...)
+   :dirs (A B C ...)
+   :fromfile FILE
+   :filters (include . exclude))"
   (interactive
-   (let* ((ans (ido-completing-read "Search current file or directory? "
-                                    '("file" "directory") nil t))
+   (let* ((file (buffer-file-name))
+          (dir (file-name-directory file))
+          (ans (ido-completing-read
+                "Search file or directory? "
+                `("file" "dir") nil t))
           (args (cond
-                 ((equal ans "file")
-                  (list :files (buffer-file-name)))
-                 ((equal ans "directory")
-                  (list :dirs (file-name-directory (buffer-file-name)))))))
+                 ((string-match "^file" ans)
+                  (list :files file))
+                 ((string-match "^dir" ans)
+                  (list :dirs dir)))))
      (push (read-from-minibuffer "Search: ") args)))
-  (if (< (length deferred:queue) search-tasks-max)
-      (deferred:$
-        (deferred:process)
-        (deferred:nextc it
-          (lambda (x)
-            (ido-completing-read "Search is done, show or not? "
-                                 '("yes" "not") nil t)
-            )))
-    (message "Search queue is full (max %s), please wait." search-tasks-max)))
-;; deferred:queue
-;; (deferred:process)
+  (search-exec?)
+  ;; (message "regexp=%s, args=%s" match args)
+  (when (stringp match)
+    (if (< search-tasks search-tasks-max)
+        (lexical-let ((match match)
+                      (files (plist-get args :files))
+                      (dirs (plist-get args :dirs))
+                      (fromfile (plist-get args :fromfile))
+                      (filters (plist-get args :filters))
+                      (inputfile (concat search-input-file "."
+                                         (number-to-string (float-time)))))
+          (setq search-tasks (1+ search-tasks))
+          ;; TODO: filters
+          (deferred:$
+            ;; Prepare input file --------------------------------------------->
+            ;; `:files' part.
+            (deferred:new
+              (lambda ()
+                (when files
+                  ;; Print files to INPUTFILE line by line.
+                  (search-with-inputfile inputfile
+                    (cond
+                     ((stringp files) (insert files))
+                     ((listp files) (mapc (lambda (str)
+                                            (insert str "\n"))
+                                          files)))))))
+            ;; `:dirs' part.
+            (deferred:nextc it
+              (lambda (&optional x)
+                (when dirs
+                  (deferred:process-shell
+                    ))))
+            (deferred:nextc it
+              (lambda (&optional x)
+                (search-with-inputfile inputfile
+                  )))
+            ;; `:fromfile' part.
+            (deferred:nextc it
+              (lambda (&optional x)
+                (when fromfile
+                  (search-with-inputfile inputfile
+                    (insert "\n")
+                    (insert-file-contents-literally fromfile)))))
+            ;; <----------------------------------------------------------------
+            ;; Start to search.
+            (deferred:nextc it
+              (lambda (&optional x)
+                (deferred:process-shell
+                  ;; Delegate to `search-command'.
+                  (apply (cdr search-command) inputfile match))))
+            ;; Print the result.
+            (deferred:nextc it
+              (lambda (result)
+                ;; Default value of `search-print-function' is `search-default-print'.
+                (funcall search-print-function inputfile match result)))))
+      (message "Search queue is full (max %s), please wait." search-tasks-max))))
 
 ;;;###autoload
 (defun search-toggle-search-result ()
   (interactive)
-  (if (string= buffer-file-name search-cached-file)
+  (if (string= buffer-file-name (expand-file-name search-result))
       ;; TODO: Kill buffer without asking.
-      (kill-buffer)
+      (progn
+        (kill-buffer)
+        ;; (mapc (lambda (win)
+        ;;         (when (window-live-p win)
+        ;;           ))
+        ;;       (window-list))
+        )
     (set-window-buffer (selected-window) (search-buffer))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Major Mode for Search Result ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (provide 'search)
 ;;; search.el ends here

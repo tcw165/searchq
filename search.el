@@ -19,7 +19,7 @@
 ;; GNU General Public License for more details.
 ;;
 ;; You should have received a copy of the GNU General Public License
-;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+;; along with this program.  I not, see <http://www.gnu.org/licenses/>.
 ;;
 ;;; Commentary:
 ;;
@@ -259,15 +259,27 @@ list"
         (progn
           ;; Increase counter.
           (setq search-tasks (1+ search-tasks))
-          ;; Delegate to `search-backends'.
           (deferred:$
-            ;; TODO: timeout.
-            (funcall (cdr search-backends)
-                     match
-                     (plist-get args :files)
-                     (plist-get args :dirs)
-                     (plist-get args :fromfile)
-                     (plist-get args :filters))
+            (deferred:earlier
+              ;; Delegate to `search-backends'.
+              (funcall (cdr search-backends)
+                       match
+                       (plist-get args :files)
+                       (plist-get args :dirs)
+                       (plist-get args :fromfile)
+                       (plist-get args :filters))
+              ;; Animation prompt.
+              (deferred:$
+                (deferred:next
+                  (deferred:lambda (x)
+                    (if (= 0 search-tasks)
+                        (message "Searching ...done!")
+                      (message "Searching...%s" (random 100))
+                      (deferred:nextc
+                        (deferred:wait 50)
+                        self)))))
+              ;; TODO: timeout.
+              )
             ;; Decrase counter.
             (deferred:nextc it
               (lambda (&optional x)

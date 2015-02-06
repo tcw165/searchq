@@ -105,6 +105,9 @@ list"
 (defvar search-prompt-timer nil
   "A timer for showing prompt animation.")
 
+(defvar search-prompt-animation '("-" "\\" "|" "/")
+  "Prompt animation.")
+
 (defun search-exec? ()
   "Test whether the necessary exe(s) are present."
   (unless (and (executable-find "sh")
@@ -220,12 +223,27 @@ Start to evaluate search task in the queue."
 (defun search-start-prompt ()
   "[internal usage]
 Start prmopt animation."
-  )
+  (unless (timerp search-prompt-timer)
+    (setq search-prompt-timer
+          (run-with-timer
+           0 0.1
+           (lambda ()
+             (let ((char (car search-prompt-animation)))
+               (message "Search ...%s" char)
+               (setq search-prompt-animation (cdr search-prompt-animation)
+                     search-prompt-animation (append
+                                              search-prompt-animation
+                                              (list char)))))))))
 
 (defun search-stop-prompt ()
   "[internal usage]
 Stop prompt animation."
-  )
+  (when (timerp search-prompt-timer)
+    (setq search-prompt-timer (cancel-timer search-prompt-timer)))
+  (message "Search ...done"))
+
+;; (search-start-prompt)
+;; (search-stop-prompt)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -303,14 +321,8 @@ The output will be dumpped directly to the `search-buffer'."
   (search:chain
    (search:process-shell-to-search-buffer "ls -al")
    (search:process-shell-to-search-buffer "ls -al /bin")
-   (search:lambda
-    (lambda ()
-      (with-current-buffer (search-buffer)
-        (insert "\n123123\n")
-        (save-buffer))))
-   (search:process-shell-to-search-buffer "find /Users/boyw165/.emacs.d/oops/whereis -name \"*.el\"|xargs grep -nH def 2>/dev/null")
-   (search-append-task
-   (search:process-shell-to-file "ls -al" "/Users/boyw165/.emacs.d/test.txt"))))
+   (search:process-shell-to-search-buffer "find /Users/boyw165/.emacs.d/elpa/ -name \"*.el\"|xargs grep -nH def 2>/dev/null")
+   (search:process-shell-to-file "ls -al" "/Users/boyw165/.emacs.d/test.txt")))
 
 ;; (test)
 ;; (message "%s" search-tasks)

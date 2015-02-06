@@ -38,7 +38,6 @@
 (require 'ido)
 
 ;; 3rd party libary.
-(require 'deferred)
 
 (defgroup search nil
   "Search")
@@ -52,6 +51,9 @@
 (defconst search-buffer-name "*Search Result*"
   "Search buffer name.")
 
+(defconst search-temp-buffer-name "*Search Temp*"
+  "Temporary search buffer name.")
+
 (defcustom search-backends (nth 0 search-default-backends)
   "Search tool name. Default is GREP."
   :type `(choice ,@(mapcar (lambda (c)
@@ -62,11 +64,6 @@
                                "dummy")
                        (function :tag "command generator function"
                                  search-dummy-backend)))
-  :group 'search)
-
-(defcustom search-print-function 'search-default-print
-  "Function of printing search result."
-  :type 'function
   :group 'search)
 
 (defcustom search-saved-file (expand-file-name "~/.emacs.d/.search")
@@ -90,7 +87,7 @@ list"
   :type 'integer
   :group 'search)
 
-(defcustom search-delimiter '(">>>>>" . "<<<<<")
+(defcustom search-delimiter '(">>>>>>>>>>" . "<<<<<<<<<<<")
   "Maximum length of the task queue."
   :type '(cons (match :tag "open delimiter")
                (match :tag "close delimiter"))
@@ -98,6 +95,12 @@ list"
 
 (defvar search-tasks nil
   "Search tasks queue.")
+
+(defvar search-tasks-count 0
+  "Search tasks count.")
+
+(defvar search-proc nil
+  "Search task process.")
 
 (defvar search-timer nil
   "A delay timer for evaluating the queued tasks.")
@@ -121,26 +124,6 @@ list"
   (with-current-buffer (get-buffer-create search-buffer-name)
     (setq buffer-file-name (expand-file-name search-saved-file))
     (current-buffer)))
-
-;; (defmacro search-with-tmpfile (filename &rest body)
-;;   "Append context produced by BODY to the FILENAME file."
-;;   (declare (indent 1) (debug t))
-;;   `(when (file-writable-p ,filename)
-;;      (with-temp-file ,filename
-;;        (and (file-exists-p ,filename)
-;;             (insert-file-contents-literally ,filename))
-;;        (progn ,@body))))
-
-;; (defun search-default-print (match result)
-;;   "Print MATCH and RESULT with delimiters."
-;;   (with-current-buffer (search-buffer)
-;;     (save-excursion
-;;       (goto-char (point-max))
-;;       (insert "\n"
-;;               (car search-delimiter) " " match "\n"
-;;               result
-;;               (cdr search-delimiter) "\n")
-;;       (save-buffer))))
 
 ;; (defun search-seralize-list (thing)
 ;;   (cond
@@ -171,13 +154,14 @@ Create a search object with FUNC function and ASYNC boolean."
   "[internal usage]
 Test if the TASK is a valid search object."
   (and (plist-get task :func)
-       (plist-get task :async)))
+       (booleanp (plist-get task :async))))
 
 (defun search-append-task (task)
   "[internal usage]
 Append TASK to `search-tasks' and evaluate it later. See `search-create-task'."
-  (and (search-task-p task)
-       (setq search-tasks (append search-tasks (list task)))))
+  (when (search-task-p task)
+    (setq search-tasks (delq search-last search-tasks)
+          search-tasks (append search-tasks (list task search-last)))))
 
 (defun search-doer ()
   "[internal usage]
@@ -199,6 +183,9 @@ Doer decide when and what to process next."
       ;; Clean the timer if there's no task.
       (and (timerp search-timer)
            (setq search-timer (cancel-timer search-timer)))
+      ;; Stop async process.
+      (and (process-live-p search-proc)
+           (setq search-proc (delete-process search-proc)))
       ;; Stop prmopt.
       (search-stop-prompt))))
 
@@ -242,16 +229,14 @@ Stop prompt animation."
     (setq search-prompt-timer (cancel-timer search-prompt-timer)))
   (message "Search ...done"))
 
-;; (search-start-prompt)
-;; (search-stop-prompt)
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun search:chain (&rest tasks)
   ;; (declare (indent 0) (debug t))
   (mapc 'search-append-task tasks)
-  (search-start-dequeue))
+  (search-start-dequeue)
+  nil)
 
 (defun search:lambda (func)
   "Create a search object wrapping FUNC which is a lambda function."
@@ -266,9 +251,15 @@ Stop prompt animation."
   (search:lambda
    (eval
     `(lambda ()
-       (with-current-buffer (search-buffer)
-         (and (functionp func)
-              (funcall func)))))))
+       ,(and (functionp func)
+             `(with-current-buffer (get-buffer-create search-buffer-name)
+                (setq buffer-file-name (expand-file-name search-saved-file))
+                (condition-case err
+                    (save-excursion
+                      (funcall ,func))
+                  (error (message "search:lambda-to-search-buffer | error: %s"
+                                  (error-message-string err))))
+                (save-buffer)))))))
 
 (defun search:process-shell (command bufname &optional callback)
   "Create a search object wrapping `start-process-shell-command' with COMMAND.
@@ -281,18 +272,24 @@ for example."
    (eval
     `(lambda (&rest args)
        (let* ((buf (get-buffer-create (or ,bufname
-                                          "*search-temp*")))
-              (proc (start-process-shell-command
-                     "*search-proc*" buf ,command)))
+                                          search-temp-buffer-name))))
+         (and (process-live-p search-proc)
+              (setq search-proc (delete-process search-proc)))
+         (setq search-proc (start-process-shell-command
+                            "*search-proc*" buf ,command))
          (set-process-sentinel
-          proc
+          search-proc
           (lambda (proc event)
-            (condition-case err
-                (with-current-buffer (process-buffer proc)
-                  (and (functionp ,callback)
-                       (funcall ,callback)))
-              (error (message "search:process-shel error: %s"
-                              (error-message-string err))))
+            (with-current-buffer (process-buffer proc)
+              (condition-case err
+                  ,(and (functionp callback)
+                        `(funcall ,callback))
+                (error (message "search:process-shell | error: %s"
+                                (error-message-string err))))
+              ;; Kill buffer if it is a temporary buffer.
+              (and (string= search-temp-buffer-name
+                            (buffer-name))
+                   (kill-buffer)))
             (search-setup-doer))))))
    ;; Asynchronous.
    t))
@@ -303,6 +300,10 @@ The output will be written to FILENAME file."
   (search:process-shell
     command (file-name-nondirectory filename)
     (eval `(lambda ()
+             ;; Prepend the content if file is alreay existed.
+             (when (file-exists-p ,filename)
+               (goto-char (point-min))
+               (insert-file-contents-literally))
              (setq buffer-file-name ,filename)
              (save-buffer)
              (kill-buffer)))))
@@ -316,96 +317,107 @@ The output will be dumpped directly to the `search-buffer'."
       (setq buffer-file-name (expand-file-name search-saved-file))
       (save-buffer))))
 
+;; !important! The last search object.
+(defvar search-last (search:lambda
+                     (lambda ()
+                       ;; Stop prompt.
+                       (search-stop-prompt)
+                       ;; Reset counter.
+                       (setq search-tasks-count 0)))
+  "[internal usage]
+The search object which always being the last one.")
+
 ;; Test >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-(defun test ()
+;; (search-test)
+(defun search-test ()
   (search:chain
+   (search:lambda
+    (lambda ()
+      (message "start")))
    (search:process-shell-to-search-buffer "ls -al")
    (search:process-shell-to-search-buffer "ls -al /bin")
-   (search:process-shell-to-search-buffer "find /Users/boyw165/.emacs.d/elpa/ -name \"*.el\"|xargs grep -nH def 2>/dev/null")
+   (search:process-shell-to-search-buffer "find /Users/boyw165/.emacs.d/elpa/ -name \"*.el\"|xargs grep -nH defun 2>/dev/null")
    (search:process-shell-to-file "ls -al" "/Users/boyw165/.emacs.d/test.txt")))
 
-;; (test)
 ;; (message "%s" search-tasks)
 ;; (setq search-tasks nil)
 ;; (setq search-timer (cancel-timer search-timer))
+
+;; (search-string "var" :dirs (expand-file-name "~/.emacs.d/oops/whereis"))
+;; (search-stop)
 ;; <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun search-ack-backend (match &optional files dirs fromfile filters)
-  "Return a deferred object which doing search job with ACK. See `search-thing'."
-  )
-
-(defun search-dummy-backend (match &optional files dirs fromfile filters)
+(defun search-dummy-backend (match files dirs fromfile filters)
   "Return a deferred object which doing nothing. See `search-thing'."
   )
 
 (defun search-grep-backend (match files dirs fromfile filters)
   "Return a deferred object which doing search job with GREP. See `search-thing'."
-  (let ((temp-file (concat search-temp-file "."
-                           (number-to-string (float-time)))))
-    (eval
-     `(deferred:$
-        ;; Prepare input file.
-        ;; `:files' part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-        ;; TODO: figure out the difference between `deferred:new' and `deferred:next'.
-        (deferred:next
+  (eval
+   `(search:chain
+     ;; Prepare input file.
+     ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ,(when files
+        `(search:lambda
           (lambda ()
-            ;; Print files to INPUTFILE line by line.
-            (search-with-tmpfile ,temp-file
-              (cond
-               ((stringp ,files) (insert ,files))
-               ((listp ,files) (mapc (lambda (str)
-                                       (insert str "\n"))
-                                     ,files))))))
-        ;; `:dirs' part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-        ,@(mapcar (lambda (path)
-                    `(deferred:nextc it
-                       (lambda (&rest ignore)
-                         (deferred:nextc
-                           (deferred:process-shell
-                             ;; TODO: filter
-                             ,(format "find %s" (expand-file-name path)))
-                           (lambda (result)
-                             (search-with-tmpfile ,temp-file
-                               (insert result "\n")))))))
-                  (cond
-                   ((stringp dirs) (list dirs))
-                   ((listp dirs) dirs)))
-        ;; `:fromfile' part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-        (deferred:nextc it
-          (lambda (&optional x)
-            (and ,fromfile
-                 (search-with-tmpfile ,temp-file
-                   (insert "\n")
-                   (insert-file-contents-literally ,fromfile)))))
-        ;; Start to search.
-        (deferred:nextc it
-          (lambda (&rest ignore)
-            (deferred:nextc
-              (deferred:process-shell
-                ,(format "xargs grep -nH \"%s\" <\"%s\" 2>/dev/null || true"
-                         match
-                         (expand-file-name temp-file)))
-              (lambda (result)
-                ;; !IMPORTANT! - Print the result.
-                ;; Default printer is `search-default-print'.
-                (funcall search-print-function ,match result)))))
-        ;; Delete intermidiate file.
-        (deferred:nextc it
-          (lambda (&rest ignore)
-            (deferred:process-shell
-              ,(format "rm \"%s\" 2>/dev/null" temp-file))))))))
+            (with-temp-file search-temp-file
+              ,(cond
+                ((stringp files) `(insert ,files))
+                ((listp files) `(mapc (lambda (str)
+                                        (insert str "\n"))
+                                      ,files)))))))
+     ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ,@(mapcar (lambda (path)
+                 `(search:process-shell-to-file
+                   ;; TODO: filter
+                   ,(format "find %s" (expand-file-name path))
+                   search-temp-file))
+               (cond
+                ((stringp dirs) (list dirs))
+                ((listp dirs) dirs)))
+     ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ,(when fromfile
+        `(search:lambda
+          (lambda ()
+            (with-current-buffer (find-file-noselect search-temp-file)
+              (insert "\n")
+              (insert-file-contents-literally ,fromfile)))))
+     ;; Start to search.
+     (search:process-shell-to-search-buffer
+      ,(format "xargs grep -nH \"%s\" <\"%s\" 2>/dev/null"
+               match
+               (expand-file-name search-temp-file))))))
 
-;; (defun search-ag-backend (match &optional filters)
-;;   )
+(defun search-ack-backend (match files dirs fromfile filters)
+  "Return a deferred object which doing search job with ACK."
+  )
+
+(defun search-ag-backend (match files dirs fromfile filters)
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;###autoload
-(defun search-string (&optional match &rest args)
+(defun search-stop ()
+  (interactive)
+  ;; Stop prompt.
+  (search-stop-prompt)
+  ;; Stop timer
+  (when (timerp search-timer)
+    (setq search-timer (cancel-timer search-timer)))
+  ;; Stop async process.
+  (when (process-live-p search-proc)
+    (setq search-proc (delete-process search-proc)))
+  ;; Clear tasks.
+  (setq search-tasks nil
+        search-tasks-count 0))
+
+;;;###autoload
+(defun search-string (match &rest args)
   "FILES format:
   (:files      (1 2 3 ...)
    :dirs       (A B C ...)
@@ -425,43 +437,56 @@ The output will be dumpped directly to the `search-buffer'."
      (push (read-from-minibuffer "Search: ") args)))
   (search-exec?)
   (when (stringp match)
-    (if (< search-tasks search-tasks-max)
+    (if (< search-tasks-count search-tasks-max)
         (progn
           ;; Increase counter.
-          (setq search-tasks (1+ search-tasks))
-          (deferred:$
-            (deferred:earlier
-              ;; Delegate to `search-backends'.
-              (funcall (cdr search-backends)
-                       match
-                       (plist-get args :files)
-                       (plist-get args :dirs)
-                       (plist-get args :fromfile)
-                       (plist-get args :filters))
-              ;; Animation prompt.
-              (deferred:$
-                (deferred:next
-                  (deferred:lambda (x)
-                    (if (= 0 search-tasks)
-                        (message "Searching ...done!")
-                      (message "Searching...%s" (random 100))
-                      (deferred:nextc
-                        (deferred:wait 1000)
-                        self)))))
-              ;; TODO: timeout.
-              )
-            ;; Decrase counter.
-            (deferred:nextc it
-              (lambda (&optional x)
-                (setq search-tasks (1- search-tasks))))))
+          (setq search-tasks-count (1+ search-tasks-count))
+          (search:chain
+           ;; Delete temp file.
+           (search:lambda
+            (lambda ()
+              (and (file-exists-p search-temp-file)
+                   (delete-file search-temp-file))))
+           ;; Print opened delimiter.
+           (search:lambda-to-search-buffer
+            (eval
+             `(lambda ()
+                (goto-char (point-max))
+                (insert ,(car search-delimiter) " " ,match "\n")))))
+          ;; Delegate to `search-backends' ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+          (funcall (cdr search-backends)
+                   match
+                   (plist-get args :files)
+                   (plist-get args :dirs)
+                   (plist-get args :fromfile)
+                   (plist-get args :filters))
+          ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+          (search:chain
+           ;; Delete intermidiate file.
+           (search:lambda
+            (lambda ()
+              (and (file-exists-p search-temp-file)
+                   (delete-file search-temp-file))))
+           ;; Print closed delimiter.
+           (search:lambda-to-search-buffer
+            (eval
+             `(lambda ()
+                (goto-char (point-max))
+                (insert ,(cdr search-delimiter) "\n\n")
+                (save-buffer))))))
       (message
-       "Search task, \"%s\", is denied due to full queue. Please wait for a while."
-       match))))
+       "Search string, \"%s\", is denied due to full queue."
+       match))
+    search-tasks-count))
+
+;;;###autoload
+(defun search-string-command ()
+  (interactive))
 
 ;;;###autoload
 (defun search-toggle-search-result ()
   (interactive)
-  (if (string= buffer-file-name (expand-file-name search-saved-file))
+  (if (string= buffer-file-name search-buffer-name)
       ;; TODO: Kill buffer without asking.
       (progn
         (kill-buffer)

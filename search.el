@@ -49,6 +49,9 @@
                                     )
   "Default alist of search backends.")
 
+(defconst search-buffer-name "*Search Result*"
+  "Search buffer name.")
+
 (defcustom search-backends (nth 0 search-default-backends)
   "Search tool name. Default is GREP."
   :type `(choice ,@(mapcar (lambda (c)
@@ -66,7 +69,7 @@
   :type 'function
   :group 'search)
 
-(defcustom search-result (expand-file-name "~/.emacs.d/.search")
+(defcustom search-saved-file (expand-file-name "~/.emacs.d/.search")
   "File for cached search result."
   :type 'string
   :group 'search)
@@ -94,10 +97,13 @@ list"
   :group 'search)
 
 (defvar search-tasks nil
-  "Search tasks.")
+  "Search tasks queue.")
 
 (defvar search-timer nil
   "A delay timer for evaluating the queued tasks.")
+
+(defvar search-prompt-timer nil
+  "A timer for showing prompt animation.")
 
 (defun search-exec? ()
   "Test whether the necessary exe(s) are present."
@@ -109,30 +115,29 @@ list"
 
 (defun search-buffer ()
   "Get search buffer and refresh its content."
-  (with-current-buffer (get-buffer-create
-                        (file-name-nondirectory search-result))
-    (setq buffer-file-name (expand-file-name search-result))
+  (with-current-buffer (get-buffer-create search-buffer-name)
+    (setq buffer-file-name (expand-file-name search-saved-file))
     (current-buffer)))
 
-(defmacro search-with-tmpfile (filename &rest body)
-  "Append context produced by BODY to the FILENAME file."
-  (declare (indent 1) (debug t))
-  `(when (file-writable-p ,filename)
-     (with-temp-file ,filename
-       (and (file-exists-p ,filename)
-            (insert-file-contents-literally ,filename))
-       (progn ,@body))))
+;; (defmacro search-with-tmpfile (filename &rest body)
+;;   "Append context produced by BODY to the FILENAME file."
+;;   (declare (indent 1) (debug t))
+;;   `(when (file-writable-p ,filename)
+;;      (with-temp-file ,filename
+;;        (and (file-exists-p ,filename)
+;;             (insert-file-contents-literally ,filename))
+;;        (progn ,@body))))
 
-(defun search-default-print (match result)
-  "Print MATCH and RESULT with delimiters."
-  (with-current-buffer (search-buffer)
-    (save-excursion
-      (goto-char (point-max))
-      (insert "\n"
-              (car search-delimiter) " " match "\n"
-              result
-              (cdr search-delimiter) "\n")
-      (save-buffer))))
+;; (defun search-default-print (match result)
+;;   "Print MATCH and RESULT with delimiters."
+;;   (with-current-buffer (search-buffer)
+;;     (save-excursion
+;;       (goto-char (point-max))
+;;       (insert "\n"
+;;               (car search-delimiter) " " match "\n"
+;;               result
+;;               (cdr search-delimiter) "\n")
+;;       (save-buffer))))
 
 ;; (defun search-seralize-list (thing)
 ;;   (cond
@@ -154,27 +159,35 @@ list"
 ;;     thing)))
 
 (defun search-create-task (func async)
+  "[internal usage]
+Create a search object with FUNC function and ASYNC boolean."
   (list :func func
         :async async))
 
 (defun search-task-p (task)
+  "[internal usage]
+Test if the TASK is a valid search object."
   (and (plist-get task :func)
        (plist-get task :async)))
 
 (defun search-append-task (task)
-  "Append TASK to `search-tasks' and evaluate it later. See `search-create-task'."
-  (setq search-tasks (append search-tasks (list task))))
+  "[internal usage]
+Append TASK to `search-tasks' and evaluate it later. See `search-create-task'."
+  (and (search-task-p task)
+       (setq search-tasks (append search-tasks (list task)))))
 
 (defun search-doer ()
-  (let ((task (car search-tasks)))
+  "[internal usage]
+Doer decide when and what to process next."
+  (let* ((task (car search-tasks))
+         (func (plist-get task :func)))
     (pop search-tasks)
     ;; Execute current task.
     (condition-case err
-        (and task
-             (funcall (plist-get task :func)))
-      (error (message "Search error: %s\nSearch task: %s"
-                      (error-message-string err)
-                      task)))
+        (and (functionp func)
+             (funcall func))
+      (error (message "search-doer error: %s"
+                      (error-message-string err))))
     ;; Find next task.
     (if search-tasks
         (cond
@@ -187,6 +200,8 @@ list"
       (search-stop-prompt))))
 
 (defun search-setup-doer ()
+  "[internal usage]
+Run `search-doer' after a tiny delay."
   (and (timerp search-timer)
        (cancel-timer search-timer))
   (setq search-timer (run-with-idle-timer
@@ -194,7 +209,8 @@ list"
                       'search-doer)))
 
 (defun search-start-dequeue ()
-  "Start to evaluate search task in the queue."
+  "[internal usage]
+Start to evaluate search task in the queue."
   (unless (timerp search-timer)
     ;; Setup timer
     (search-setup-doer)
@@ -202,87 +218,100 @@ list"
     (search-start-prompt)))
 
 (defun search-start-prompt ()
+  "[internal usage]
+Start prmopt animation."
   )
 
 (defun search-stop-prompt ()
+  "[internal usage]
+Stop prompt animation."
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun search:chain (&rest tasks)
-  )
+  ;; (declare (indent 0) (debug t))
+  (mapc 'search-append-task tasks)
+  (search-start-dequeue))
 
 (defun search:lambda (func)
-  "Create a search object wrapping BODY. A search object is actually a LAMBDA
-object."
+  "Create a search object wrapping FUNC which is a lambda function."
   (search-create-task
    ;; Function.
    func
    ;; Synchronous.
    nil))
 
-(defun search:process-shell (command)
+(defun search:lambda-to-search-buffer (func)
+  "Create a search object wrapping FUNC under `search-buffer'."
+  (search:lambda
+   (eval
+    `(lambda ()
+       (with-current-buffer (search-buffer)
+         (and (functionp func)
+              (funcall func)))))))
+
+(defun search:process-shell (command bufname &optional callback)
   "Create a search object wrapping `start-process-shell-command' with COMMAND.
-The output will be dumpped to a temporary buffer which will be deleted when done."
+The output will be dumpped to a BUFNAME buffer which will be deleted when done.
+The CALLBACK is evaluated under process's buffer.
+See `search:process-shell-to-file' or `search:process-shell-to-search-buffer'
+for example."
   (search-create-task
    ;; Function.
    (eval
     `(lambda (&rest args)
-       (let ((proc (start-process-shell-command
-                    "*search-proc*" (search-buffer) ,command)))
+       (let* ((buf (get-buffer-create (or ,bufname
+                                          "*search-temp*")))
+              (proc (start-process-shell-command
+                     "*search-proc*" buf ,command)))
          (set-process-sentinel
           proc
           (lambda (proc event)
-            (with-current-buffer (search-buffer)
-              (save-buffer)
-              (search-setup-doer)))))))
+            (condition-case err
+                (with-current-buffer (process-buffer proc)
+                  (and (functionp ,callback)
+                       (funcall ,callback)))
+              (error (message "search:process-shel error: %s"
+                              (error-message-string err))))
+            (search-setup-doer))))))
    ;; Asynchronous.
    t))
 
-(defun search:process-shell-buffer (command)
+(defun search:process-shell-to-file (command filename)
+  "Create a search object wrapping `start-process-shell-command' with COMMAND.
+The output will be written to FILENAME file."
+  (search:process-shell
+    command (file-name-nondirectory filename)
+    (eval `(lambda ()
+             (setq buffer-file-name ,filename)
+             (save-buffer)
+             (kill-buffer)))))
+
+(defun search:process-shell-to-search-buffer (command)
   "Create a search object wrapping `start-process-shell-command' with COMMAND.
 The output will be dumpped directly to the `search-buffer'."
-  (search-create-task
-   ;; Function.
-   (eval
-    `(lambda (&rest args)
-       (let ((proc (start-process-shell-command
-                    "*search-proc*" (search-buffer) ,command)))
-         (set-process-sentinel
-          proc
-          (lambda (proc event)
-            (with-current-buffer (search-buffer)
-              (save-buffer)
-              (search-setup-doer)))))))
-   ;; Asynchronous.
-   t))
+  (search:process-shell
+    command search-buffer-name
+    (lambda ()
+      (setq buffer-file-name (expand-file-name search-saved-file))
+      (save-buffer))))
 
 ;; Test >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 (defun test ()
-  (search-append-task
-   (search:process-shell-buffer "ls -al"))
-  
-  (search-append-task
-   (search:process-shell-buffer "ls -al /bin"))
-  
-  (search-append-task
+  (search:chain
+   (search:process-shell-to-search-buffer "ls -al")
+   (search:process-shell-to-search-buffer "ls -al /bin")
    (search:lambda
     (lambda ()
       (with-current-buffer (search-buffer)
         (insert "\n123123\n")
-        (save-buffer)))))
+        (save-buffer))))
+   (search:process-shell-to-search-buffer "find /Users/boyw165/.emacs.d/oops/whereis -name \"*.el\"|xargs grep -nH def 2>/dev/null")
+   (search-append-task
+   (search:process-shell-to-file "ls -al" "/Users/boyw165/.emacs.d/test.txt"))))
 
-  (search-append-task
-   (search:process-shell-buffer "ls -al"))
-
-  (search-append-task
-   (search:process-shell-buffer "ls -al"))
-
-  (search-append-task
-   (search:process-shell-buffer "find /Users/boyw165/.emacs.d/elpa -name \"*.el\"|xargs grep -nH def 2>/dev/null"))
-  
-  (search-start-dequeue))
 ;; (test)
 ;; (message "%s" search-tasks)
 ;; (setq search-tasks nil)
@@ -420,7 +449,7 @@ The output will be dumpped directly to the `search-buffer'."
 ;;;###autoload
 (defun search-toggle-search-result ()
   (interactive)
-  (if (string= buffer-file-name (expand-file-name search-result))
+  (if (string= buffer-file-name (expand-file-name search-saved-file))
       ;; TODO: Kill buffer without asking.
       (progn
         (kill-buffer)

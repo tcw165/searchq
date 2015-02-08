@@ -4,7 +4,7 @@
 ;;
 ;; Author: boyw165
 ;; Version: 20150115.1500
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "24.3") (hl-anything "1.0.0"))
 ;;
 ;; This file is NOT part of GNU Emacs.
 ;;
@@ -38,6 +38,7 @@
 (require 'ido)
 
 ;; 3rd party libary.
+(require 'search-result-mode)
 
 (defgroup search nil
   "Search")
@@ -486,7 +487,7 @@ The search object which always being the last one.")
 ;;;###autoload
 (defun search-toggle-search-result ()
   (interactive)
-  (if (string= buffer-file-name search-buffer-name)
+  (if (string= (buffer-name) search-buffer-name)
       ;; TODO: Kill buffer without asking.
       (progn
         (kill-buffer)
@@ -495,7 +496,8 @@ The search object which always being the last one.")
         ;;           ))
         ;;       (window-list))
         )
-    (set-window-buffer (selected-window) (search-buffer))))
+    (find-file search-saved-file)
+    (rename-buffer search-buffer-name)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode for Search Result ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

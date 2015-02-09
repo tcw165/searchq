@@ -23,7 +23,9 @@
 ;;
 ;;; Commentary:
 ;;
-;; 
+;; TODO
+;; ----
+;; * Open with search-result will cause hl-highlight-mode work incorrectly.
 ;; 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
@@ -38,6 +40,7 @@
 (require 'ido)
 
 ;; 3rd party libary.
+(require 'hl-anything)
 (require 'search-result-mode)
 
 (defgroup search nil
@@ -67,9 +70,19 @@
                                  search-dummy-backend)))
   :group 'search)
 
+(defun search-set-saved-file (symb val)
+  "Setter for `search-saved-file'."
+  (when (file-writable-p val)
+    (set symb val)
+    (add-to-list 'auto-mode-alist
+                 `(,(format "\\%s\\'" (file-name-nondirectory val))
+                   . search-result-mode))))
+
+;; (add-to-list 'auto-mode-alist '("\\.search\\'" . search-result-mode))
 (defcustom search-saved-file (expand-file-name "~/.emacs.d/.search")
   "File for cached search result."
   :type 'string
+  :set 'search-set-saved-file
   :group 'search)
 
 (defcustom search-temp-file (expand-file-name "/var/tmp/.search-tmp")
@@ -88,10 +101,15 @@ list"
   :type 'integer
   :group 'search)
 
-(defcustom search-delimiter '(">>>>>>>>>>" . "<<<<<<<<<<<")
+(defcustom search-delimiter '(">>>>>>>>>> " . "<<<<<<<<<<<")
   "Maximum length of the task queue."
   :type '(cons (match :tag "open delimiter")
                (match :tag "close delimiter"))
+  :group 'search)
+
+(defcustom search-prompt-function 'search-default-prompt-function
+  "Prompt function."
+  :type 'function
   :group 'search)
 
 (defvar search-tasks nil
@@ -109,9 +127,6 @@ list"
 (defvar search-prompt-timer nil
   "A timer for showing prompt animation.")
 
-(defvar search-prompt-animation '("-" "\\" "|" "/")
-  "Prompt animation.")
-
 (defun search-exec? ()
   "Test whether the necessary exe(s) are present."
   (unless (and (executable-find "sh")
@@ -119,12 +134,6 @@ list"
                (executable-find "xargs")
                (executable-find (car search-backends)))
     (error "%s or xargs is not supported on your system!" (car search-backends))))
-
-(defun search-buffer ()
-  "Get search buffer and refresh its content."
-  (with-current-buffer (get-buffer-create search-buffer-name)
-    (setq buffer-file-name (expand-file-name search-saved-file))
-    (current-buffer)))
 
 ;; (defun search-seralize-list (thing)
 ;;   (cond
@@ -144,6 +153,15 @@ list"
 ;;    ;; A match ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;    ((stringp thing)
 ;;     thing)))
+
+(defmacro search-with-search-buffer (&rest body)
+  "[internal usage]
+Evaluate BODY in the search buffer."
+  (declare (indent 0) (debug t))
+  `(with-current-buffer (get-buffer-create search-buffer-name)
+     (set-auto-mode t)
+     (setq buffer-file-name (expand-file-name search-saved-file))
+     ,@body))
 
 (defun search-create-task (func async)
   "[internal usage]
@@ -208,6 +226,20 @@ Start to evaluate search task in the queue."
     ;; Start prmopt.
     (search-start-prompt)))
 
+(defvar search-prompt-animation '("-" "\\" "|" "/")
+  "[internal usage]
+Prompt animation.")
+
+(defun search-default-prompt-function ()
+  "[internal usage]
+Default prompt function."
+  (let ((char (car search-prompt-animation)))
+    (minibuffer-message "Search ...%s" char)
+    (setq search-prompt-animation (cdr search-prompt-animation)
+          search-prompt-animation (append
+                                   search-prompt-animation
+                                   (list char)))))
+
 (defun search-start-prompt ()
   "[internal usage]
 Start prmopt animation."
@@ -216,12 +248,8 @@ Start prmopt animation."
           (run-with-timer
            0 0.1
            (lambda ()
-             (let ((char (car search-prompt-animation)))
-               (message "Search ...%s" char)
-               (setq search-prompt-animation (cdr search-prompt-animation)
-                     search-prompt-animation (append
-                                              search-prompt-animation
-                                              (list char)))))))))
+             (and (functionp search-prompt-function)
+                  (funcall search-prompt-function)))))))
 
 (defun search-stop-prompt ()
   "[internal usage]
@@ -253,8 +281,7 @@ Stop prompt animation."
    (eval
     `(lambda ()
        ,(and (functionp func)
-             `(with-current-buffer (get-buffer-create search-buffer-name)
-                (setq buffer-file-name (expand-file-name search-saved-file))
+             `(search-with-search-buffer
                 (condition-case err
                     (save-excursion
                       (funcall ,func))
@@ -272,8 +299,11 @@ for example."
    ;; Function.
    (eval
     `(lambda (&rest args)
-       (let* ((buf (get-buffer-create (or ,bufname
-                                          search-temp-buffer-name))))
+       (let* ((buf ,(if (string= bufname search-buffer-name)
+                        (search-with-search-buffer
+                          (current-buffer))
+                      (get-buffer-create (or bufname
+                                             search-temp-buffer-name)))))
          (and (process-live-p search-proc)
               (setq search-proc (delete-process search-proc)))
          (setq search-proc (start-process-shell-command
@@ -453,7 +483,7 @@ The search object which always being the last one.")
             (eval
              `(lambda ()
                 (goto-char (point-max))
-                (insert ,(car search-delimiter) " " ,match "\n")))))
+                (insert ,(car search-delimiter) ,match "\n")))))
           ;; Delegate to `search-backends' ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           (funcall (cdr search-backends)
                    match

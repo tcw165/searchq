@@ -101,7 +101,7 @@
     (and (search-result-is-valid-item)
          (delete-region (line-beginning-position 1)
                         (line-beginning-position 2))))
-  (save-buffer))
+  (and (buffer-modified-p) (save-buffer)))
 
 (defun search-result-kill-buffer ()
   (interactive)
@@ -130,11 +130,11 @@
   (remove-overlays)
   (setq font-lock-defaults search-result-mode-font-lock-keywords
         truncate-lines t)
+  ;; Set local highlight faces.
   (setq-local hl-highlight-special-faces '(search-title-face))
+  ;; Rename buffer to `search-buffer-name'
+  (rename-buffer search-buffer-name)
   (add-hook 'before-save-hook 'search-result-clean-empty-item nil t))
-
-;; Add association when required.
-(add-to-list 'auto-mode-alist '("\\.search\\'" . search-result-mode))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Faces ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

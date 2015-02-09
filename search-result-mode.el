@@ -53,8 +53,8 @@
     ;; (define-key map [up] )
     ;; (define-key map [down] )
     (define-key map [return] 'search-result-open-item)
-    (define-key map [?q] 'search-result-kill-buffer)
-    (define-key map [escape] 'search-result-kill-buffer)
+    (define-key map [?q] 'search-toggle-search-result)
+    (define-key map [escape] 'search-toggle-search-result)
     (define-key map [?d] 'search-result-kill-item-at-point)
     map)
   "[internal usage]
@@ -74,8 +74,9 @@ Font lock keywords for `search-result-mode'.")
   "[internal usage]
 Return imenu index for `search-result-mode'. See `imenu--index-alist' for the 
 format of the buffer index alist."
-  (when (and (string= (buffer-name) search-buffer-name)
-             (not (search-running?)))
+  ;; (when (and (string= (buffer-name) search-buffer-name)
+  ;;            (not (search-running?)))
+  (when (string= (buffer-name) search-buffer-name)
     (let (index)
       (save-excursion
         (goto-char (point-max))
@@ -129,17 +130,9 @@ Delete item at point."
                         (line-beginning-position 2))))
   (and (buffer-modified-p) (save-buffer)))
 
-(defun search-result-kill-buffer ()
-  "[internal usage]
-"
-  (interactive)
-  (and (buffer-modified-p)
-       (save-buffer))
-  (kill-buffer))
-
 (defun search-result-open-item ()
   "[internal usage]
-"
+Open search item."
   (interactive)
   (beginning-of-line)
   (when (looking-at "^\\(.+\\):\\([0-9]+\\):")

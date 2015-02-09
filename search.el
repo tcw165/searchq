@@ -1,9 +1,9 @@
 ;;; search.el --- Framework of queued search tasks. Support GREP, ACK, AG and more.
 ;;
-;; Copyright (C) 2015
+;; Copyright (C) 2014-2015
 ;;
 ;; Author: boyw165
-;; Version: 20150115.1500
+;; Version: 20150209.1800
 ;; Package-Requires: ((emacs "24.3") (hl-anything "1.0.0"))
 ;;
 ;; This file is NOT part of GNU Emacs.
@@ -25,14 +25,20 @@
 ;;
 ;; TODO
 ;; ----
+;; * Filters in GREP backend.
+;; * `search-toggle-search-result' shouldn't always kill search buffer.
+;; * Add menu items and toolbar buttons.
 ;; * Open with search-result will cause hl-highlight-mode work incorrectly.
 ;; 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ;;; Change Log:
 ;;
-;; 2015-02-05
+;; 2015-02-09
 ;; * Initial release.
+;; * Support queued search task.
+;; * Support both of asynchronous process and synchronous script task.
+;; * Support imenu for search result.
 ;;
 ;;; Code:
 
@@ -46,7 +52,7 @@
   "Search")
 
 (defconst search-default-backends '(("grep" . search-grep-backend)
-                                    ;; ("ack" . search-ack-backend)
+                                    ("ack" . search-ack-backend)
                                     ;; ("ag" . search-ag-backend)
                                     )
   "Default alist of search backends.")
@@ -234,7 +240,8 @@ Prompt animation.")
 (defun search-default-prompt-function ()
   "[internal usage]
 Default prompt function."
-  (let ((char (car search-prompt-animation)))
+  (let ((char (car search-prompt-animation))
+        (minibuffer-message-timeout 0.01))
     (minibuffer-message "Search ...%s" char)
     (setq search-prompt-animation (cdr search-prompt-animation)
           search-prompt-animation (append
@@ -257,7 +264,8 @@ Start prmopt animation."
 Stop prompt animation."
   (when (timerp search-prompt-timer)
     (setq search-prompt-timer (cancel-timer search-prompt-timer)))
-  (minibuffer-message "Search ...done"))
+  (let ((minibuffer-message-timeout 2))
+    (minibuffer-message "Search ...done")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -287,8 +295,7 @@ Stop prompt animation."
                     (save-excursion
                       (funcall ,func))
                   (error (message "search:lambda-to-search-buffer | error: %s"
-                                  (error-message-string err))))
-                (save-buffer)))))))
+                                  (error-message-string err))))))))))
 
 (defun search:process-shell (command bufname &optional callback)
   "Create a search object wrapping `start-process-shell-command' with COMMAND.
@@ -346,8 +353,7 @@ The output will be dumpped directly to the `search-buffer'."
   (search:process-shell
     command search-buffer-name
     (lambda ()
-      (setq buffer-file-name (expand-file-name search-saved-file))
-      (save-buffer))))
+      (setq buffer-file-name (expand-file-name search-saved-file)))))
 
 ;; !important! The last search object.
 (defvar search-last (search:lambda
@@ -383,11 +389,12 @@ The search object which always being the last one.")
 ;; Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun search-dummy-backend (match files dirs fromfile filters)
-  "Return a deferred object which doing nothing. See `search-thing'."
-  )
+  "[internal usage]
+Just a dummy backend. See `search-thing'.")
 
 (defun search-grep-backend (match files dirs fromfile filters)
-  "Return a deferred object which doing search job with GREP. See `search-thing'."
+  "[internal usage]
+Return a deferred object which doing search job with GREP. See `search-thing'."
   (eval
    `(search:chain
      ;; Prepare input file.
@@ -424,7 +431,8 @@ The search object which always being the last one.")
                (expand-file-name search-temp-file))))))
 
 (defun search-ack-backend (match files dirs fromfile filters)
-  "Return a deferred object which doing search job with ACK."
+  "[internal usage]
+Return a deferred object which doing search job with ACK."
   )
 
 (defun search-ag-backend (match files dirs fromfile filters)
@@ -473,6 +481,13 @@ The search object which always being the last one.")
         (progn
           ;; Increase counter.
           (setq search-tasks-count (1+ search-tasks-count))
+          ;; Switch to search buffer.
+          (switch-to-buffer (search-with-search-buffer
+                              (and (file-exists-p search-saved-file)
+                                   (insert-file-contents-literally
+                                    search-saved-file
+                                    nil nil nil t))
+                              (current-buffer)))
           (search:chain
            ;; Delete temp file.
            (search:lambda

@@ -41,7 +41,6 @@
 
 ;; 3rd party libary.
 (require 'hl-anything)
-(require 'search-result-mode)
 
 (defgroup search nil
   "Search")
@@ -70,19 +69,15 @@
                                  search-dummy-backend)))
   :group 'search)
 
-(defun search-set-saved-file (symb val)
-  "Setter for `search-saved-file'."
-  (when (file-writable-p val)
-    (set symb val)
-    (add-to-list 'auto-mode-alist
-                 `(,(format "\\%s\\'" (file-name-nondirectory val))
-                   . search-result-mode))))
-
-;; (add-to-list 'auto-mode-alist '("\\.search\\'" . search-result-mode))
 (defcustom search-saved-file (expand-file-name "~/.emacs.d/.search")
   "File for cached search result."
   :type 'string
-  :set 'search-set-saved-file
+  :set (lambda (symb val)
+         (when (file-writable-p val)
+           (set symb val)
+           (add-to-list 'auto-mode-alist
+                        `(,(format "\\%s\\'" (file-name-nondirectory val))
+                          . search-result-mode))))
   :group 'search)
 
 (defcustom search-temp-file (expand-file-name "/var/tmp/.search-tmp")
@@ -101,8 +96,8 @@ list"
   :type 'integer
   :group 'search)
 
-(defcustom search-delimiter '(">>>>>>>>>> " . "<<<<<<<<<<<")
-  "Maximum length of the task queue."
+(defcustom search-delimiter '(">>>>>>>>>> " . "<<<<<<<<<<")
+  "Delimiter of every search task. Default is markdown style."
   :type '(cons (match :tag "open delimiter")
                (match :tag "close delimiter"))
   :group 'search)
@@ -128,12 +123,18 @@ list"
   "A timer for showing prompt animation.")
 
 (defun search-exec? ()
-  "Test whether the necessary exe(s) are present."
+  "[internal usage]
+Test whether the necessary exe(s) are present."
   (unless (and (executable-find "sh")
                (executable-find "find")
                (executable-find "xargs")
                (executable-find (car search-backends)))
     (error "%s or xargs is not supported on your system!" (car search-backends))))
+
+(defun search-running? ()
+  "[internal usage]
+Test whether the search is under processing."
+  (> search-tasks-count 0))
 
 ;; (defun search-seralize-list (thing)
 ;;   (cond
@@ -256,7 +257,7 @@ Start prmopt animation."
 Stop prompt animation."
   (when (timerp search-prompt-timer)
     (setq search-prompt-timer (cancel-timer search-prompt-timer)))
-  (message "Search ...done"))
+  (minibuffer-message "Search ...done"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -531,6 +532,8 @@ The search object which always being the last one.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode for Search Result ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(require 'search-result-mode)
 
 (provide 'search)
 ;;; search.el ends here

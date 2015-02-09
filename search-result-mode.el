@@ -56,35 +56,61 @@
     (define-key map [?q] 'search-result-kill-buffer)
     (define-key map [escape] 'search-result-kill-buffer)
     (define-key map [?d] 'search-result-kill-item-at-point)
-    map))
+    map)
+  "[internal usage]
+Keymap for `search-result-mode'.")
 
 (defvar search-result-mode-font-lock-keywords
-  '((("^\\([[:alnum:] $_\/.+-]+\\):\\([0-9]+\\)" (1 'search-file-face) (2 'search-linum-face))
-     ("^\\(>>>>>\\s-\\)\\(.+\\)$" (1 'search-separator-face) (2 'search-title-face))
-     ("^\\(<<<<<\\)$" (1 'search-separator-face)))
+  `((("^\\([[:alnum:] $_\/.+-]+\\):\\([0-9]+\\)" (1 'search-file-face) (2 'search-linum-face))
+     )
     ;; don't use syntactic fontification.
     t
     ;; Case insensitive.
-    nil))
+    nil)
+  "[internal usage]
+Font lock keywords for `search-result-mode'.")
+
+(defun search-imenu-create-index ()
+  "[internal usage]
+Return imenu index for `search-result-mode'. See `imenu--index-alist' for the 
+format of the buffer index alist."
+  (when (and (string= (buffer-name) search-buffer-name)
+             (not (search-running?)))
+    (let (index)
+      (save-excursion
+        (goto-char (point-max))
+        (while (re-search-backward
+                (concat "^" (regexp-quote (car search-delimiter)) "\\(.*\\)$")
+                nil t)
+          (push (cons (match-string-no-properties 1)
+                      (line-end-position)) index))
+        (list (cons "Search Item" index))))))
 
 (defun search-result-is-valid-item ()
+  "[internal usage]
+Test valid item at point."
   (save-excursion
     (beginning-of-line)
-    (not (or (looking-at (car search-delimiter))
-             (looking-at (cdr search-delimiter))
+    (not (or (looking-at (regexp-quote (car search-delimiter)))
+             (looking-at (regexp-quote (cdr search-delimiter)))
              (looking-at "$")))))
 
 (defun search-result-clean-empty-item ()
+  "[internal usage]
+Delete invalid item."
   (save-excursion
     (goto-char 1)
     (while (re-search-forward (format "%s.*[\n\r]%s"
-                                      (car search-delimiter)
-                                      (cdr search-delimiter)) nil t)
+                                      (regexp-quote (car search-delimiter))
+                                      (regexp-quote (cdr search-delimiter)))
+                              nil t)
       (goto-char (match-beginning 0))
       (delete-region (line-beginning-position 1)
                      (line-beginning-position 4)))))
 
 (defun search-result-kill-item-at-point ()
+  "[internal usage]
+Delete item at point."
   (interactive)
   (if mark-active
       (let ((end-mark (set-marker (copy-marker (mark-marker) t) (region-end))))
@@ -104,12 +130,16 @@
   (and (buffer-modified-p) (save-buffer)))
 
 (defun search-result-kill-buffer ()
+  "[internal usage]
+"
   (interactive)
   (and (buffer-modified-p)
        (save-buffer))
   (kill-buffer))
 
 (defun search-result-open-item ()
+  "[internal usage]
+"
   (interactive)
   (beginning-of-line)
   (when (looking-at "^\\(.+\\):\\([0-9]+\\):")
@@ -132,6 +162,8 @@
         truncate-lines t)
   ;; Set local highlight faces.
   (setq-local hl-highlight-special-faces '(search-title-face))
+  ;; Set local imenu generator.
+  (setq-local imenu-create-index-function 'search-imenu-create-index)
   ;; Rename buffer to `search-buffer-name'
   (rename-buffer search-buffer-name)
   (add-hook 'before-save-hook 'search-result-clean-empty-item nil t))

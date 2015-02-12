@@ -4,7 +4,7 @@
 ;;
 ;; Author: boyw165
 ;; Version: 20150209.1800
-;; Package-Requires: ((emacs "24.3") (hl-anything "1.0.0"))
+;; Package-Requires: ((emacs "24.3") (hl-anything "0.0.9"))
 ;;
 ;; This file is NOT part of GNU Emacs.
 ;;
@@ -25,7 +25,9 @@
 ;;
 ;; TODO
 ;; ----
-;; * Change the way of interaction of `search-string'.
+;; * Make `search:lambda' more like `lambda'.
+;; * Support ACK.
+;; * Support AG.
 ;; * Cancel individual search task.
 ;; * `search-toggle-search-result' shouldn't always kill search buffer.
 ;; * Add menu items and toolbar buttons.
@@ -73,6 +75,11 @@
                                "dummy")
                        (function :tag "command generator function"
                                  search-dummy-backend)))
+  :group 'search)
+
+(defcustom search-ignored-paths-for-find-command '("*.git*" "*.svn*")
+  "Ignored paths for FIND command."
+  :type '(repeat string)
   :group 'search)
 
 (defcustom search-saved-file (expand-file-name "~/.emacs.d/.search")
@@ -428,7 +435,7 @@ Search thing by using GREP."
                   (insert-file-contents-literally ,fromfile)))))
          ;; Start to search by using input file.
          (search:process-shell-to-search-buffer
-          ,(format "xargs grep -nH \"%s\" <\"%s\" 2>/dev/null"
+          ,(format "xargs grep -nH -e \"%s\" <\"%s\" 2>/dev/null"
                    match
                    (expand-file-name search-temp-file))))))))
 
@@ -485,25 +492,21 @@ Search thing by using AG."
 ;; (search-string "def" :dirs '(("*.el") ("*.git*" "*.svn*") "/Users/boyw165/.emacs.d/oops"))
 ;;;###autoload
 (defun search-string (match &rest args)
-  "ARGS format:
-  :dirs       '(INCLUDE_LIST EXCLUDE_LIST PATH1 PATH2 PATH3 ...)
-  :files      '(PATH1 PATH2 PATH3 ...)
-  :fromfile   PATH"
+  "asdfadsfadsf"
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  ;; (search-string "def" :dirs '(nil ("*.git*" "*.svn*") "/path/a" "/path/b"))
+  ;; (search-string "def" :dirs '(nil ("*.git*" "*.svn*") "/usr/include"))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (interactive
-   (let* ((file (buffer-file-name))
-          (dir (file-name-directory file))
-          (ans (ido-completing-read
-                "Search file or directory? "
-                `("file" "dir") nil t))
-          (args (cond
-                 ((string-match "^file" ans)
-                  (list :files file))
-                 ((string-match "^dir" ans)
-                  (list :dirs dir)))))
-     (push (read-from-minibuffer "Search: ") args)))
+   (let* ((match (read-from-minibuffer "Search: "))
+          (path (expand-file-name
+                 (read-file-name
+                  (format "Search %s in: " match)
+                  nil nil t))))
+     (cond
+      ((file-regular-p path)
+       (list match :files path))
+      ((file-directory-p path)
+       (list match :dirs `(nil ,search-ignored-paths-for-find-command ,path))))))
   (search-exec?)
   (when (stringp match)
     (if (< search-tasks-count search-tasks-max)
@@ -529,9 +532,11 @@ Search thing by using AG."
              `(lambda ()
                 (goto-char (point-max))
                 (insert ,(car search-delimiter) ,match "\n")))))
+          ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           ;; Delegate to `search-backends' ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           (funcall (cdr search-backends)
                    (append (list :match match) args))
+          ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           (search:chain
            ;; Delete intermidiate file.
@@ -554,24 +559,42 @@ Search thing by using AG."
 ;;;###autoload
 (defun search-string-command (cmd)
   (interactive
-   ;; TODO:
-   )
-  (funcall (cdr search-backends) cmd))
+   (list (read-from-minibuffer
+          "Search Command: "
+          "find `pwd` | xargs grep -nH -e ")))
+  (search:chain
+   ;; Print opened delimiter.
+   (search:lambda-to-search-buffer
+    (eval
+     `(lambda ()
+        (goto-char (point-max))
+        (insert ,(car search-delimiter) ,match "\n")))))
+  (funcall (cdr search-backends)
+           (list :cmd cmd))
+  (search:chain
+   ;; Print closed delimiter.
+   (search:lambda-to-search-buffer
+    (eval
+     `(lambda ()
+        (goto-char (point-max))
+        (insert ,(cdr search-delimiter) "\n\n")
+        (save-buffer))))))
 
 ;;;###autoload
 (defun search-toggle-search-result ()
   (interactive)
   (if (string= (buffer-name) search-buffer-name)
       ;; TODO: Kill buffer without asking.
-      (progn
-        (kill-buffer)
-        ;; (mapc (lambda (win)
-        ;;         (when (window-live-p win)
-        ;;           ))
-        ;;       (window-list))
-        )
-    (find-file search-saved-file)
-    (rename-buffer search-buffer-name)))
+      (if (search-running?)
+          ;; TODO: Hide buffer instead of killing it.
+          ()
+        (and (buffer-modified-p)
+             (save-buffer))
+        (kill-buffer))
+    (if (get-buffer search-buffer-name)
+        (switch-to-buffer search-buffer-name)
+      (find-file search-saved-file)
+      (rename-buffer search-buffer-name))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode for Search Result ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

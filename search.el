@@ -237,12 +237,19 @@ Start to evaluate search task in the queue."
   "[internal usage]
 Prompt animation.")
 
+(defun search-message (message &rest args)
+  "[internal usage]
+Display MESSAGE in the minibuffer when minibuffer is inactive."
+  (when (not (minibufferp (current-buffer)))
+    (if args
+        (apply 'message message args)
+      (message "%s" message))))
+
 (defun search-default-prompt-function ()
   "[internal usage]
 Default prompt function."
-  (let ((char (car search-prompt-animation))
-        (minibuffer-message-timeout 0.01))
-    (minibuffer-message "Search ...%s" char)
+  (let ((char (car search-prompt-animation)))
+    (search-message "Search ...%s" char)
     (setq search-prompt-animation (cdr search-prompt-animation)
           search-prompt-animation (append
                                    search-prompt-animation
@@ -264,8 +271,7 @@ Start prmopt animation."
 Stop prompt animation."
   (when (timerp search-prompt-timer)
     (setq search-prompt-timer (cancel-timer search-prompt-timer)))
-  (let ((minibuffer-message-timeout 2))
-    (minibuffer-message "Search ...done")))
+  (search-message "Search ...done"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -456,6 +462,7 @@ Return a deferred object which doing search job with ACK."
   (setq search-tasks nil
         search-tasks-count 0))
 
+;; (search-string "def" :dirs '("/Users/boyw165/.emacs.d/oops" "/Users/boyw165/_CODE/ycmd") :filters '(nil . ("\\.el$" "\\.md$")))
 ;;;###autoload
 (defun search-string (match &rest args)
   "FILES format:

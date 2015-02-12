@@ -25,7 +25,8 @@
 ;;
 ;; TODO
 ;; ----
-;; * Filters in GREP backend.
+;; * Change the way of interaction of `search-string'.
+;; * Cancel individual search task.
 ;; * `search-toggle-search-result' shouldn't always kill search buffer.
 ;; * Add menu items and toolbar buttons.
 ;; * Open with search-result will cause hl-highlight-mode work incorrectly.
@@ -34,7 +35,7 @@
 ;;
 ;;; Change Log:
 ;;
-;; 2015-02-09
+;; 2015-02-13
 ;; * Initial release.
 ;; * Support queued search task.
 ;; * Support both of asynchronous process and synchronous script task.
@@ -53,8 +54,7 @@
 
 (defconst search-default-backends '(("grep" . search-grep-backend)
                                     ("ack" . search-ack-backend)
-                                    ;; ("ag" . search-ag-backend)
-                                    )
+                                    ("ag" . search-ag-backend))
   "Default alist of search backends.")
 
 (defconst search-buffer-name "*Search Result*"
@@ -135,31 +135,13 @@ Test whether the necessary exe(s) are present."
                (executable-find "find")
                (executable-find "xargs")
                (executable-find (car search-backends)))
-    (error "%s or xargs is not supported on your system!" (car search-backends))))
+    (error "%s or xargs is not supported on your system!" (car search-backends)))
+  t)
 
 (defun search-running? ()
   "[internal usage]
 Test whether the search is under processing."
   (> search-tasks-count 0))
-
-;; (defun search-seralize-list (thing)
-;;   (cond
-;;    ;; A list of strings ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;    ((listp thing)
-;;     (let ((it thing)
-;;           (space "")
-;;           str)
-;;       (while it
-;;         (ignore-errors
-;;           (setq str (concat str
-;;                             space
-;;                             (car it))))
-;;         (setq it (cdr it)
-;;               space " "))
-;;       str))
-;;    ;; A match ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;    ((stringp thing)
-;;     thing)))
 
 (defmacro search-with-search-buffer (&rest body)
   "[internal usage]
@@ -277,7 +259,7 @@ Stop prompt animation."
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun search:chain (&rest tasks)
-  ;; (declare (indent 0) (debug t))
+  "Chain the search tasks."
   (mapc 'search-append-task tasks)
   (search-start-dequeue)
   nil)
@@ -371,78 +353,110 @@ The output will be dumpped directly to the `search-buffer'."
   "[internal usage]
 The search object which always being the last one.")
 
-;; Test >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-;; (search-test)
-(defun search-test ()
-  (search:chain
-   (search:lambda
-    (lambda ()
-      (message "start")))
-   (search:process-shell-to-search-buffer "ls -al")
-   (search:process-shell-to-search-buffer "ls -al /bin")
-   (search:process-shell-to-search-buffer "find /Users/boyw165/.emacs.d/elpa/ -name \"*.el\"|xargs grep -nH defun 2>/dev/null")
-   (search:process-shell-to-file "ls -al" "/Users/boyw165/.emacs.d/test.txt")))
-
-;; (message "%s" search-tasks)
-;; (setq search-tasks nil)
-;; (setq search-timer (cancel-timer search-timer))
-
-;; (search-string "var" :dirs (expand-file-name "~/.emacs.d/oops/whereis"))
-;; (search-stop)
-;; <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun search-dummy-backend (match files dirs fromfile filters)
+(defun search-dummy-backend (&rest args)
   "[internal usage]
 Just a dummy backend. See `search-thing'.")
 
-(defun search-grep-backend (match files dirs fromfile filters)
+(defun search-gen-find-filter (include exclude)
   "[internal usage]
-Return a deferred object which doing search job with GREP. See `search-thing'."
-  (eval
-   `(search:chain
-     ;; Prepare input file.
-     ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-     ,(when files
-        `(search:lambda
-          (lambda ()
-            (with-temp-file search-temp-file
-              ,(cond
-                ((stringp files) `(insert ,files))
-                ((listp files) `(mapc (lambda (str)
-                                        (insert str "\n"))
-                                      ,files)))))))
-     ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-     ,@(mapcar (lambda (path)
-                 `(search:process-shell-to-file
-                   ;; TODO: filter
-                   ,(format "find %s" (expand-file-name path))
-                   search-temp-file))
-               (cond
-                ((stringp dirs) (list dirs))
-                ((listp dirs) dirs)))
-     ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-     ,(when fromfile
-        `(search:lambda
-          (lambda ()
-            (with-current-buffer (find-file-noselect search-temp-file)
-              (insert "\n")
-              (insert-file-contents-literally ,fromfile)))))
-     ;; Start to search.
-     (search:process-shell-to-search-buffer
-      ,(format "xargs grep -nH \"%s\" <\"%s\" 2>/dev/null"
-               match
-               (expand-file-name search-temp-file))))))
+Take INCLUDE and EXCLUDE arguments and generate FIND command string. The format
+depends on the tool you use.
+e.g. *.txt is for GREP command."
+  ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ;; (search-gen-find-filter nil nil)
+  ;; (search-gen-find-filter '("*.el" "*.txt") nil)
+  ;; (search-gen-find-filter '("*.el" "*.txt") '(".git" ".svn"))
+  ;; (search-gen-find-filter nil '(".git" ".svn"))
+  ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  (let (icmd xcmd)
+    (ignore-errors
+      (when include
+        (mapc (lambda (exp)
+                (setq icmd (concat icmd " -path \"" exp "\"")))
+              include))
+      (when exclude
+        (mapc (lambda (exp)
+                (setq xcmd (concat xcmd " -not -path \"" exp "\"")))
+              exclude)))
+    (concat icmd xcmd)))
 
-(defun search-ack-backend (match files dirs fromfile filters)
+(defun search-grep-backend (args)
   "[internal usage]
-Return a deferred object which doing search job with ACK."
-  )
+Search thing by using GREP."
+  (let* ((cmd (plist-get args :cmd))
+         (match (plist-get args :match))
+         (dirs (plist-get args :dirs))
+         (include (nth 0 dirs))
+         (exclude (nth 1 dirs))
+         (real-dirs (cddr dirs))
+         (files (plist-get args :files))
+         (fromfile (plist-get args :fromfile)))
+    (if cmd
+        (eval
+         `(search:chain
+           (search:process-shell-to-search-buffer ,cmd)))
+      (eval
+       `(search:chain
+         ;; Prepare input file.
+         ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+         ,(when files
+            `(search:lambda
+              (lambda ()
+                (with-temp-file search-temp-file
+                  ,(cond
+                    ((stringp files) `(insert ,files))
+                    ((listp files) `(mapc (lambda (str)
+                                            (insert str "\n"))
+                                          ,files)))))))
+         ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+         ,@(mapcar (lambda (path)
+                     `(search:process-shell-to-file
+                       ,(format "find %s %s"
+                                (expand-file-name path)
+                                (search-gen-find-filter include exclude))
+                       search-temp-file))
+                   real-dirs)
+         ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+         ,(when fromfile
+            `(search:lambda
+              (lambda ()
+                (with-current-buffer (find-file-noselect search-temp-file)
+                  (insert "\n")
+                  (insert-file-contents-literally ,fromfile)))))
+         ;; Start to search by using input file.
+         (search:process-shell-to-search-buffer
+          ,(format "xargs grep -nH \"%s\" <\"%s\" 2>/dev/null"
+                   match
+                   (expand-file-name search-temp-file))))))))
 
-(defun search-ag-backend (match files dirs fromfile filters)
-  )
+(defun search-ack-backend (args)
+  "[internal usage]
+Search thing by using ACK."
+  (let* ((cmd (plist-get args :cmd))
+         (match (plist-get args :match))
+         (dirs (plist-get args :dirs))
+         (include (nth 0 dirs))
+         (exclude (nth 1 dirs))
+         (real-dirs (cddr dirs))
+         (files (plist-get args :files))
+         (fromfile (plist-get args :fromfile)))
+    ))
+
+(defun search-ag-backend (args)
+  "[internal usage]
+Search thing by using AG."
+  (let* ((cmd (plist-get args :cmd))
+         (match (plist-get args :match))
+         (dirs (plist-get args :dirs))
+         (include (nth 0 dirs))
+         (exclude (nth 1 dirs))
+         (real-dirs (cddr dirs))
+         (files (plist-get args :files))
+         (fromfile (plist-get args :fromfile)))
+    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -462,14 +476,22 @@ Return a deferred object which doing search job with ACK."
   (setq search-tasks nil
         search-tasks-count 0))
 
-;; (search-string "def" :dirs '("/Users/boyw165/.emacs.d/oops" "/Users/boyw165/_CODE/ycmd") :filters '(nil . ("\\.el$" "\\.md$")))
+;; :cmd        COMMAND string (top priority)
+;; :match      REGEXP or simple string
+;; :dirs       '(INCLUDE_LIST EXCLUDE_LIST PATH1 PATH2 PATH3 ...)
+;; :files      '(PATH1 PATH2 PATH3 ...)
+;; :fromfile   PATH
+;;
+;; (search-string "def" :dirs '(("*.el") ("*.git*" "*.svn*") "/Users/boyw165/.emacs.d/oops"))
 ;;;###autoload
 (defun search-string (match &rest args)
-  "FILES format:
-  (:files      (1 2 3 ...)
-   :dirs       (A B C ...)
-   :fromfile   FILE
-   :filters    (include . exclude))"
+  "ARGS format:
+  :dirs       '(INCLUDE_LIST EXCLUDE_LIST PATH1 PATH2 PATH3 ...)
+  :files      '(PATH1 PATH2 PATH3 ...)
+  :fromfile   PATH"
+  ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ;; (search-string "def" :dirs '(nil ("*.git*" "*.svn*") "/path/a" "/path/b"))
+  ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (interactive
    (let* ((file (buffer-file-name))
           (dir (file-name-directory file))
@@ -509,11 +531,7 @@ Return a deferred object which doing search job with ACK."
                 (insert ,(car search-delimiter) ,match "\n")))))
           ;; Delegate to `search-backends' ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           (funcall (cdr search-backends)
-                   match
-                   (plist-get args :files)
-                   (plist-get args :dirs)
-                   (plist-get args :fromfile)
-                   (plist-get args :filters))
+                   (append (list :match match) args))
           ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
           (search:chain
            ;; Delete intermidiate file.
@@ -534,8 +552,11 @@ Return a deferred object which doing search job with ACK."
     search-tasks-count))
 
 ;;;###autoload
-(defun search-string-command ()
-  (interactive))
+(defun search-string-command (cmd)
+  (interactive
+   ;; TODO:
+   )
+  (funcall (cdr search-backends) cmd))
 
 ;;;###autoload
 (defun search-toggle-search-result ()

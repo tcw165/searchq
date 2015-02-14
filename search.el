@@ -27,6 +27,7 @@
 ;; ----
 ;; * Support ACK.
 ;; * Support AG.
+;; * Improve `search-result-mode'.
 ;; * Cancel individual search task.
 ;; * `search-toggle-search-result' shouldn't always kill search buffer.
 ;; * Add menu items and toolbar buttons.
@@ -36,10 +37,11 @@
 ;;
 ;;; Change Log:
 ;;
-;; 2015-02-13
+;; 2015-02-15
 ;; * Initial release.
 ;; * Support queued search task.
 ;; * Support both of asynchronous process and synchronous script task.
+;; * Support killing asynchronous search task.
 ;; * Support imenu for search result.
 ;;
 ;;; Code:
@@ -65,15 +67,13 @@
   "Temporary search buffer name.")
 
 (defcustom search-backends (nth 0 search-default-backends)
-  "Search tool name. Default is GREP."
+  "Search backends."
   :type `(choice ,@(mapcar (lambda (c)
                              `(const :tag ,(car c) ,(car c) ,(cdr c)))
                            search-default-backends)
-                 (cons :tag "user defined"
-                       (match :tag "exec name"
-                               "dummy")
-                       (function :tag "command generator function"
-                                 search-dummy-backend)))
+                 (cons :tag "User Defined"
+                       (string :tag "Exec Name")
+                       (function :tag "Backend Function")))
   :group 'search)
 
 (defcustom search-ignored-paths-for-find-command '("*.git*" "*.svn*")
@@ -120,7 +120,7 @@ list"
   :group 'search)
 
 (defvar search-tasks nil
-  "Search tasks queue.")
+  "Search tasks queue. See `search-create-task' for struct format.")
 
 (defvar search-tasks-count 0
   "Search tasks count.")
@@ -135,7 +135,7 @@ list"
   "A timer for showing prompt animation.")
 
 (defun search-exec? ()
-  "[internal usage]
+  "[internal use]
 Test whether the necessary exe(s) are present."
   (unless (and (executable-find "sh")
                (executable-find "find")
@@ -145,12 +145,12 @@ Test whether the necessary exe(s) are present."
   t)
 
 (defun search-running? ()
-  "[internal usage]
+  "[internal use]
 Test whether the search is under processing."
   (> search-tasks-count 0))
 
 (defmacro search-with-search-buffer (&rest body)
-  "[internal usage]
+  "[internal use]
 Evaluate BODY in the search buffer."
   (declare (indent 0) (debug t))
   `(with-current-buffer (get-buffer-create search-buffer-name)
@@ -159,26 +159,27 @@ Evaluate BODY in the search buffer."
      ,@body))
 
 (defun search-create-task (func async)
-  "[internal usage]
-Create a search object with FUNC function and ASYNC boolean."
+  "[internal use]
+Create a search task with FUNC function and ASYNC boolean."
   (list :func func
         :async async))
 
 (defun search-task-p (task)
-  "[internal usage]
-Test if the TASK is a valid search object."
-  (and (plist-get task :func)
-       (booleanp (plist-get task :async))))
+  "[internal use]
+Test if the TASK is a valid search task."
+  (plist-get task :func))
 
 (defun search-append-task (task)
-  "[internal usage]
+  "[internal use]
 Append TASK to `search-tasks' and evaluate it later. See `search-create-task'."
   (when (search-task-p task)
-    (setq search-tasks (delq search-last search-tasks)
-          search-tasks (append search-tasks (list task search-last)))))
+    ;; Append task and update destruct task.
+    (setq search-tasks (delq search-destructor-task search-tasks)
+          search-tasks (append search-tasks
+                               (list task search-destructor-task)))))
 
 (defun search-doer ()
-  "[internal usage]
+  "[internal use]
 Doer decide when and what to process next."
   (let* ((task (car search-tasks))
          (func (plist-get task :func)))
@@ -190,43 +191,34 @@ Doer decide when and what to process next."
       (error (message "search-doer error: %s"
                       (error-message-string err))))
     ;; Find next task.
-    (if search-tasks
-        (cond
-         ((null (plist-get task :async))
-          (search-setup-doer)))
-      ;; Clean the timer if there's no task.
-      (and (timerp search-timer)
-           (setq search-timer (cancel-timer search-timer)))
-      ;; Stop async process.
-      (and (process-live-p search-proc)
-           (setq search-proc (delete-process search-proc)))
-      ;; Stop prmopt.
-      (search-stop-prompt))))
+    (when search-tasks
+      (cond
+       ((null (plist-get task :async))
+        (search-setup-doer))))))
 
 (defun search-setup-doer ()
-  "[internal usage]
+  "[internal use]
 Run `search-doer' after a tiny delay."
   (and (timerp search-timer)
-       (cancel-timer search-timer))
+       (setq search-timer (cancel-timer search-timer)))
   (setq search-timer (run-with-idle-timer
                       search-timer-delay nil
                       'search-doer)))
 
 (defun search-start-dequeue ()
-  "[internal usage]
+  "[internal use]
 Start to evaluate search task in the queue."
-  (unless (timerp search-timer)
-    ;; Setup timer
-    (search-setup-doer)
-    ;; Start prmopt.
-    (search-start-prompt)))
+  ;; Setup timer
+  (search-setup-doer)
+  ;; Start prmopt.
+  (search-start-prompt))
 
 (defvar search-prompt-animation '("-" "\\" "|" "/")
-  "[internal usage]
+  "[internal use]
 Prompt animation.")
 
 (defun search-message (message &rest args)
-  "[internal usage]
+  "[internal use]
 Display MESSAGE in the minibuffer when minibuffer is inactive."
   (when (not (minibufferp (current-buffer)))
     (if args
@@ -234,7 +226,7 @@ Display MESSAGE in the minibuffer when minibuffer is inactive."
       (message "%s" message))))
 
 (defun search-default-prompt-function ()
-  "[internal usage]
+  "[internal use]
 Default prompt function."
   (let ((char (car search-prompt-animation)))
     (search-message "Search ...%s" char)
@@ -244,34 +236,40 @@ Default prompt function."
                                    (list char)))))
 
 (defun search-start-prompt ()
-  "[internal usage]
+  "[internal use]
 Start prmopt animation."
-  (unless (timerp search-prompt-timer)
-    (setq search-prompt-timer
-          (run-with-timer
-           0 0.1
-           (lambda ()
-             (and (functionp search-prompt-function)
-                  (funcall search-prompt-function)))))))
+  (when (timerp search-prompt-timer)
+    (setq search-prompt-timer (cancel-timer search-prompt-timer)))
+  (setq search-prompt-timer
+        (run-with-timer
+         0 0.1
+         (lambda ()
+           (and (functionp search-prompt-function)
+                (funcall search-prompt-function))))))
 
 (defun search-stop-prompt ()
-  "[internal usage]
+  "[internal use]
 Stop prompt animation."
   (when (timerp search-prompt-timer)
     (setq search-prompt-timer (cancel-timer search-prompt-timer)))
   (search-message "Search ...done"))
 
+(defun search-list-tasks ()
+  )
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun search:chain (&rest tasks)
-  "Chain the search tasks."
+  "[backend api]
+Chain the TASKS."
   (mapc 'search-append-task tasks)
   (search-start-dequeue)
   nil)
 
 (defmacro search:lambda (&rest body)
-  "Create a search object wrapping FUNC which is a lambda function."
+  "[backend api]
+Create a search task wrapping FUNC which is a lambda function."
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ;; (search:lambda
   ;;   (message "123"))
@@ -288,7 +286,8 @@ Stop prompt animation."
     nil))
 
 (defmacro search:lambda-to-search-buffer (&rest body)
-  "Create a search object wrapping FUNC under `search-buffer'."
+  "[backend api]
+Create a search task wrapping FUNC under `search-buffer'."
   (declare (doc-string 2) (indent defun) (debug t))
   `(search:lambda
      (search-with-search-buffer
@@ -299,7 +298,8 @@ Stop prompt animation."
                          (error-message-string err)))))))
 
 (defun search:process-shell (command bufname &optional callback)
-  "Create a search object wrapping `start-process-shell-command' with COMMAND.
+  "[backend api]
+Create a search task wrapping `start-process-shell-command' with COMMAND.
 The output will be dumpped to a BUFNAME buffer which will be deleted when done.
 The CALLBACK is evaluated under process's buffer.
 See `search:process-shell-to-file' or `search:process-shell-to-search-buffer'
@@ -335,7 +335,8 @@ for example."
    t))
 
 (defun search:process-shell-to-file (command filename)
-  "Create a search object wrapping `start-process-shell-command' with COMMAND.
+  "[backend api]
+Create a search task wrapping `start-process-shell-command' with COMMAND.
 The output will be written to FILENAME file."
   (search:process-shell
     command (file-name-nondirectory filename)
@@ -349,31 +350,50 @@ The output will be written to FILENAME file."
              (kill-buffer)))))
 
 (defun search:process-shell-to-search-buffer (command)
-  "Create a search object wrapping `start-process-shell-command' with COMMAND.
+  "[backend api]
+Create a search task wrapping `start-process-shell-command' with COMMAND.
 The output will be dumpped directly to the `search-buffer'."
   (search:process-shell
     command search-buffer-name
     (lambda ()
       (setq buffer-file-name (expand-file-name search-saved-file)))))
 
-;; !important! The last search object.
-(defvar search-last (search:lambda
-                      ;; Stop prompt.
-                      (search-stop-prompt)
-                      ;; Reset counter.
-                      (setq search-tasks-count 0))
-  "[internal usage]
-Destructor-liked search object which is always the last one in the queue.")
+(defvar search-clean-temp-file-task
+  (search:lambda
+    (and (file-exists-p search-temp-file)
+         (delete-file search-temp-file)))
+  "[backend api]
+Search task to clean temporary file.")
+
+(defvar search-print-closed-delimiter
+  (search:lambda-to-search-buffer
+    (goto-char (point-max))
+    (unless (looking-back "[\r\n]")
+      (insert "\n"))
+    (insert (cdr search-delimiter) "\n\n")
+    (save-buffer))
+  "[backend api]
+Search task to print closed delimiter.")
+
+;; !important! The last search task.
+(defvar search-destructor-task
+  (search:lambda
+    ;; Stop prompt.
+    (search-stop-prompt)
+    ;; Reset counter.
+    (setq search-tasks-count 0))
+  "[internal use]
+Destructor-liked search task which is always the last one in the queue.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun search-dummy-backend (&rest args)
-  "[internal usage]
+  "[internal use]
 Just a dummy backend. See `search-thing'.")
 
 (defun search-gen-find-filter (include exclude)
-  "[internal usage]
+  "[internal use]
 Take INCLUDE and EXCLUDE arguments and generate FIND command string. The format
 depends on the tool you use.
 e.g. *.txt is for GREP command."
@@ -396,7 +416,7 @@ e.g. *.txt is for GREP command."
     (concat icmd xcmd)))
 
 (defun search-grep-backend (args)
-  "[internal usage]
+  "[internal use]
 Search thing by using GREP."
   (let* ((cmd (plist-get args :cmd))
          (match (plist-get args :match))
@@ -443,7 +463,7 @@ Search thing by using GREP."
                    (expand-file-name search-temp-file))))))))
 
 (defun search-ack-backend (args)
-  "[internal usage]
+  "[internal use]
 Search thing by using ACK."
   (let* ((cmd (plist-get args :cmd))
          (match (plist-get args :match))
@@ -456,7 +476,7 @@ Search thing by using ACK."
     ))
 
 (defun search-ag-backend (args)
-  "[internal usage]
+  "[internal use]
 Search thing by using AG."
   (let* ((cmd (plist-get args :cmd))
          (match (plist-get args :match))
@@ -470,21 +490,6 @@ Search thing by using AG."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;###autoload
-(defun search-stop ()
-  (interactive)
-  ;; Stop prompt.
-  (search-stop-prompt)
-  ;; Stop timer
-  (when (timerp search-timer)
-    (setq search-timer (cancel-timer search-timer)))
-  ;; Stop async process.
-  (when (process-live-p search-proc)
-    (setq search-proc (delete-process search-proc)))
-  ;; Clear tasks.
-  (setq search-tasks nil
-        search-tasks-count 0))
 
 ;; :cmd        COMMAND string (top priority)
 ;; :match      REGEXP or simple string
@@ -502,9 +507,10 @@ Search thing by using AG."
   (interactive
    (let* ((match (read-from-minibuffer "Search: "))
           (path (expand-file-name
-                 (read-file-name
-                  (format "Search %s in: " match)
-                  nil nil t))))
+                 ;; TODO: read file or directory name.
+                 ;; TODO: history.
+                 (ido-read-directory-name
+                  (format "Search %s in: " match)))))
      (cond
       ((file-regular-p path)
        (list match :files path))
@@ -525,10 +531,7 @@ Search thing by using AG."
                                       nil nil nil t))
                                 (current-buffer)))
             (search:chain
-             ;; Delete temp file.
-             (search:lambda
-               (and (file-exists-p search-temp-file)
-                    (delete-file search-temp-file)))
+             search-clean-temp-file-task
              ;; Print opened delimiter.
              (search:lambda-to-search-buffer
                (goto-char (point-max))
@@ -538,15 +541,8 @@ Search thing by using AG."
                      ',(append (list :match match) args))
             ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             (search:chain
-             ;; Delete intermidiate file.
-             (search:lambda
-               (and (file-exists-p search-temp-file)
-                    (delete-file search-temp-file)))
-             ;; Print closed delimiter.
-             (search:lambda-to-search-buffer
-               (goto-char (point-max))
-               (insert (cdr search-delimiter) "\n\n")
-               (save-buffer)))))
+             search-clean-temp-file-task
+             search-print-closed-delimiter)))
       (message
        "Search string, \"%s\", is denied due to full queue."
        match))
@@ -572,11 +568,7 @@ Search thing by using AG."
            (list :cmd cmd))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (search:chain
-   ;; Print closed delimiter.
-   (search:lambda-to-search-buffer
-     (goto-char (point-max))
-     (insert (cdr search-delimiter) "\n\n")
-     (save-buffer))))
+   search-print-closed-delimiter))
 
 ;;;###autoload
 (defun search-toggle-search-result ()
@@ -593,6 +585,27 @@ Search thing by using AG."
         (switch-to-buffer search-buffer-name)
       (find-file search-saved-file)
       (rename-buffer search-buffer-name))))
+
+;;;###autoload
+(defun search-stop (index)
+  "Stop search task of INDEX index."
+  (interactive '(0))
+  (if (featurep 'helm)
+      (progn
+        (message "feature constructing..."))
+    (message "helm package is necessary but you don't have it installed.")))
+
+;;;###autoload
+(defun search-stop-all ()
+  "Stop all search tasks."
+  (interactive)
+  ;; Kill asynchronous tasks and let synchronous tasks continue.
+  (dolist (task search-tasks)
+    (and (plist-get task :async)
+         (setq search-tasks (delq task search-tasks))))
+  ;; Stop async process.
+  (when (process-live-p search-proc)
+    (setq search-proc (delete-process search-proc))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode for Search Result ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

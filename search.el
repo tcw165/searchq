@@ -55,10 +55,13 @@
 (defgroup search nil
   "Search")
 
-(defconst search-default-backends '(("grep" . search-grep-backend)
-                                    ("ack" . search-ack-backend)
-                                    ("ag" . search-ag-backend))
-  "Default alist of search backends.")
+(defconst search-default-backends '(("FIND and GREP" ("find" "grep") search-grep-backend)
+                                    ("ACK only"      ("ack")         search-ack-backend)
+                                    ("AG only"       ("ag")          search-ag-backend))
+  "Default search backends. The format:
+The 1st element is description string.
+The 2nd element is a exec path list to be tested.
+The 3rd element is the backend which is the doer of everything.")
 
 (defconst search-buffer-name "*Search Result*"
   "Search buffer name.")
@@ -69,10 +72,12 @@
 (defcustom search-backends (nth 0 search-default-backends)
   "Search backends."
   :type `(choice ,@(mapcar (lambda (c)
-                             `(const :tag ,(car c) ,(car c) ,(cdr c)))
+                             `(const :tag ,(nth 0 c)
+                                     ,c))
                            search-default-backends)
-                 (cons :tag "User Defined"
-                       (string :tag "Exec Name")
+                 (list :tag "User Defined"
+                       (string :tag "Description")
+                       (repeat :tag "Necessary Exec List" (string :tag "Name"))
                        (function :tag "Backend Function")))
   :group 'search)
 
@@ -138,10 +143,12 @@ list"
   "[internal use]
 Test whether the necessary exe(s) are present."
   (unless (and (executable-find "sh")
-               (executable-find "find")
                (executable-find "xargs")
-               (executable-find (car search-backends)))
-    (error "%s or xargs is not supported on your system!" (car search-backends)))
+               (null (memq nil
+                           (mapcar 'executable-find
+                                   (nth 1 search-backends)))))
+    (error "%s or xargs is not supported on your system!"
+           (nth 1 search-backends)))
   t)
 
 (defun search-running? ()
@@ -537,7 +544,7 @@ Search thing by using AG."
                (goto-char (point-max))
                (insert (car search-delimiter) ,match "\n")))
             ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            (funcall (cdr search-backends)
+            (funcall (nth 2 search-backends)
                      ',(append (list :match match) args))
             ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             (search:chain
@@ -564,7 +571,7 @@ Search thing by using AG."
        (goto-char (point-max))
        (insert (car search-delimiter) ,cmd "\n"))))
   ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  (funcall (cdr search-backends)
+  (funcall (nth 2 search-backends)
            (list :cmd cmd))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (search:chain

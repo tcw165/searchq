@@ -55,13 +55,15 @@
 (defgroup search nil
   "Search")
 
-(defconst search-default-backends '(("FIND and GREP" ("find" "grep") search-grep-backend)
-                                    ("ACK only"      ("ack")         search-ack-backend)
-                                    ("AG only"       ("ag")          search-ag-backend))
+(defconst search-default-backends
+  '(("FIND and GREP" ("find" "grep") "find `pwd`|xargs grep -nH -e " search-grep-backend)
+    ("ACK only"      ("ack")         "" search-ack-backend)
+    ("AG only"       ("ag")          "" search-ag-backend))
   "Default search backends. The format:
 The 1st element is description string.
 The 2nd element is a exec path list to be tested.
-The 3rd element is the backend which is the doer of everything.")
+The 3rd element is a command sample string.
+The 4th element is the backend which is the doer of everything.")
 
 (defconst search-buffer-name "*Search Result*"
   "Search buffer name.")
@@ -78,6 +80,7 @@ The 3rd element is the backend which is the doer of everything.")
                  (list :tag "User Defined"
                        (string :tag "Description")
                        (repeat :tag "Necessary Exec List" (string :tag "Name"))
+                       (string :tag "Command Sample")
                        (function :tag "Backend Function")))
   :group 'search)
 
@@ -117,6 +120,11 @@ list"
   "Delimiter of every search task. Default is markdown style."
   :type '(cons (match :tag "open delimiter")
                (match :tag "close delimiter"))
+  :group 'search)
+
+(defcustom search-start-action-function 'search-switch-to-search-buffer
+  "Action function whenever new search starts."
+  :type 'function
   :group 'search)
 
 (defcustom search-prompt-function 'search-default-prompt-function
@@ -165,6 +173,15 @@ Evaluate BODY in the search buffer."
      (setq buffer-file-name (expand-file-name search-saved-file))
      ,@body))
 
+(defun search-prepare-search-buffer ()
+  "Prepare search buffer."
+  (unless (get-buffer search-buffer-name)
+    (search-with-search-buffer
+      (and (file-exists-p search-saved-file)
+           (insert-file-contents-literally
+            search-saved-file
+            nil nil nil t)))))
+
 (defun search-create-task (func async)
   "[internal use]
 Create a search task with FUNC function and ASYNC boolean."
@@ -184,6 +201,12 @@ Append TASK to `search-tasks' and evaluate it later. See `search-create-task'."
     (setq search-tasks (delq search-destructor-task search-tasks)
           search-tasks (append search-tasks
                                (list task search-destructor-task)))))
+
+(defun search-list-tasks ()
+  )
+
+(defun search-switch-to-search-buffer ()
+  (switch-to-buffer search-buffer-name))
 
 (defun search-doer ()
   "[internal use]
@@ -260,9 +283,6 @@ Stop prompt animation."
   (when (timerp search-prompt-timer)
     (setq search-prompt-timer (cancel-timer search-prompt-timer)))
   (search-message "Search ...done"))
-
-(defun search-list-tasks ()
-  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -425,55 +445,49 @@ e.g. *.txt is for GREP command."
 (defun search-grep-backend (args)
   "[internal use]
 Search thing by using GREP."
-  (let* ((cmd (plist-get args :cmd))
-         (match (plist-get args :match))
+  (let* ((match (plist-get args :match))
          (dirs (plist-get args :dirs))
          (include (nth 0 dirs))
          (exclude (nth 1 dirs))
          (real-dirs (cddr dirs))
          (files (plist-get args :files))
          (fromfile (plist-get args :fromfile)))
-    (if cmd
-        (eval
-         `(search:chain
-           (search:process-shell-to-search-buffer ,cmd)))
-      (eval
-       `(search:chain
-         ;; Prepare input file.
-         ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-         ,(when files
-            `(search:lambda
-               (with-temp-file search-temp-file
-                 ,(cond
-                   ((stringp files) `(insert ,files))
-                   ((listp files) `(mapc (lambda (str)
-                                           (insert str "\n"))
-                                         ,files))))))
-         ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-         ,@(mapcar (lambda (path)
-                     `(search:process-shell-to-file
-                       ,(format "find %s %s"
-                                (expand-file-name path)
-                                (search-gen-find-filter include exclude))
-                       search-temp-file))
-                   real-dirs)
-         ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-         ,(when fromfile
-            `(search:lambda
-               (with-current-buffer (find-file-noselect search-temp-file)
-                 (insert "\n")
-                 (insert-file-contents-literally ,fromfile))))
-         ;; Start to search by using input file.
-         (search:process-shell-to-search-buffer
-          ,(format "xargs grep -nH -e \"%s\" <\"%s\" 2>/dev/null"
-                   match
-                   (expand-file-name search-temp-file))))))))
+    (eval
+     `(search:chain
+       ;; Prepare input file.
+       ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ,(when files
+          `(search:lambda
+             (with-temp-file search-temp-file
+               ,(cond
+                 ((stringp files) `(insert ,files))
+                 ((listp files) `(mapc (lambda (str)
+                                         (insert str "\n"))
+                                       ,files))))))
+       ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ,@(mapcar (lambda (path)
+                   `(search:process-shell-to-file
+                     ,(format "find %s %s"
+                              (expand-file-name path)
+                              (search-gen-find-filter include exclude))
+                     search-temp-file))
+                 real-dirs)
+       ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ,(when fromfile
+          `(search:lambda
+             (with-current-buffer (find-file-noselect search-temp-file)
+               (insert "\n")
+               (insert-file-contents-literally ,fromfile))))
+       ;; Start to search by using input file.
+       (search:process-shell-to-search-buffer
+        ,(format "xargs grep -nH -e \"%s\" <\"%s\" 2>/dev/null"
+                 match
+                 (expand-file-name search-temp-file)))))))
 
 (defun search-ack-backend (args)
   "[internal use]
 Search thing by using ACK."
-  (let* ((cmd (plist-get args :cmd))
-         (match (plist-get args :match))
+  (let* ((match (plist-get args :match))
          (dirs (plist-get args :dirs))
          (include (nth 0 dirs))
          (exclude (nth 1 dirs))
@@ -485,8 +499,7 @@ Search thing by using ACK."
 (defun search-ag-backend (args)
   "[internal use]
 Search thing by using AG."
-  (let* ((cmd (plist-get args :cmd))
-         (match (plist-get args :match))
+  (let* ((match (plist-get args :match))
          (dirs (plist-get args :dirs))
          (include (nth 0 dirs))
          (exclude (nth 1 dirs))
@@ -498,7 +511,6 @@ Search thing by using AG."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; :cmd        COMMAND string (top priority)
 ;; :match      REGEXP or simple string
 ;; :dirs       '(INCLUDE_LIST EXCLUDE_LIST PATH1 PATH2 PATH3 ...)
 ;; :files      '(PATH1 PATH2 PATH3 ...)
@@ -530,13 +542,9 @@ Search thing by using AG."
          `(progn
             ;; Increase counter.
             (setq search-tasks-count (1+ search-tasks-count))
-            ;; Switch to search buffer.
-            (switch-to-buffer (search-with-search-buffer
-                                (and (file-exists-p search-saved-file)
-                                     (insert-file-contents-literally
-                                      search-saved-file
-                                      nil nil nil t))
-                                (current-buffer)))
+            (search-prepare-search-buffer)
+            (funcall search-start-action-function)
+            ;; Start searching.
             (search:chain
              search-clean-temp-file-task
              ;; Print opened delimiter.
@@ -544,7 +552,7 @@ Search thing by using AG."
                (goto-char (point-max))
                (insert (car search-delimiter) ,match "\n")))
             ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            (funcall (nth 2 search-backends)
+            (funcall (nth 3 search-backends)
                      ',(append (list :match match) args))
             ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             (search:chain
@@ -557,24 +565,26 @@ Search thing by using AG."
 
 ;;;###autoload
 (defun search-string-command (cmd)
-  ""
+  "Take CMD arguement and execute it asynchronously."
   (interactive
    (list (read-from-minibuffer
           "Search Command: "
-          "find `pwd` | xargs grep -nH -e ")))
+          (nth 2 search-backends))))
   ;; Redirect error to null device.
   (setq cmd (concat cmd " 2>/dev/null"))
+  (search-exec?)
+  (search-prepare-search-buffer)
+  (funcall search-start-action-function)
+  ;; Start searching.
   (search:chain
    ;; Print opened delimiter.
    (eval
     `(search:lambda-to-search-buffer
        (goto-char (point-max))
-       (insert (car search-delimiter) ,cmd "\n"))))
-  ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  (funcall (nth 2 search-backends)
-           (list :cmd cmd))
-  ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  (search:chain
+       (insert (car search-delimiter) ,cmd "\n")))
+   ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   (search:process-shell-to-search-buffer cmd)
+   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
    search-print-closed-delimiter))
 
 ;;;###autoload

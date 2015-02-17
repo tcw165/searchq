@@ -56,13 +56,13 @@
   "Search")
 
 (defconst search-default-backends
-  '(("FIND and GREP" ("find" "grep") "find `pwd`|xargs grep -nH -e " search-grep-backend)
-    ("ACK only"      ("ack")         "" search-ack-backend)
-    ("AG only"       ("ag")          "" search-ag-backend))
+  '(("FIND and GREP" ("find" "grep") "find `pwd`|xargs grep -nH -e ${cursor}" search-grep-backend)
+    ("ACK only"      ("ack")         "ack --nocolor ${cursor} `pwd`"          search-ack-backend)
+    ("AG only"       ("ag")          ""                                       search-ag-backend))
   "Default search backends. The format:
 The 1st element is description string.
 The 2nd element is a exec path list to be tested.
-The 3rd element is a command sample string.
+The 3rd element is a command template string.
 The 4th element is the backend which is the doer of everything.")
 
 (defconst search-buffer-name "*Search Result*"
@@ -72,7 +72,7 @@ The 4th element is the backend which is the doer of everything.")
   "Temporary search buffer name.")
 
 (defcustom search-backends (nth 0 search-default-backends)
-  "Search backends."
+  "Search backends. See `search-default-backends'."
   :type `(choice ,@(mapcar (lambda (c)
                              `(const :tag ,(nth 0 c)
                                      ,c))
@@ -422,7 +422,7 @@ Just a dummy backend. See `search-thing'.")
 (defun search-gen-find-filter (include exclude)
   "[internal use]
 Take INCLUDE and EXCLUDE arguments and generate FIND command string. The format
-depends on the tool you use.
+depends on the FIND's option, --path.
 e.g. *.txt is for GREP command."
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ;; (search-gen-find-filter nil nil)
@@ -431,6 +431,7 @@ e.g. *.txt is for GREP command."
   ;; (search-gen-find-filter nil '(".git" ".svn"))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (let (icmd xcmd)
+    (setq exclude (append exclude search-ignored-paths-for-find-command))
     (ignore-errors
       (when include
         (mapc (lambda (exp)
@@ -459,11 +460,10 @@ Search thing by using GREP."
        ,(when files
           `(search:lambda
              (with-temp-file search-temp-file
-               ,(cond
-                 ((stringp files) `(insert ,files))
-                 ((listp files) `(mapc (lambda (str)
-                                         (insert str "\n"))
-                                       ,files))))))
+               (mapc (lambda (path)
+                       (and (file-exists-p path)
+                            (insert (expand-file-name path) "\n")))
+                     ,files))))
        ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,@(mapcar (lambda (path)
                    `(search:process-shell-to-file
@@ -484,6 +484,35 @@ Search thing by using GREP."
                  match
                  (expand-file-name search-temp-file)))))))
 
+(defun search-gen-ack-filter (include exclude)
+  "[internal use]
+Take INCLUDE and EXCLUDE arguments and generate ACK command string. The format
+depends on ACK's option, --type-set=include:ext:??? for include; 
+--type-set=exclude:ext:???."
+  ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ;; (search-gen-ack-filter nil nil)
+  ;; (search-gen-ack-filter '("el" "txt" "md") nil)
+  ;; (search-gen-ack-filter nil '(".git" ".svn"))
+  ;; (search-gen-ack-filter '("el" "txt") '(".git" ".svn"))
+  ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  (let (icmd xcmd)
+    (ignore-errors
+      (when include
+        (setq icmd " --type-set=include:ext:")
+        (mapc (lambda (exp)
+                (setq icmd (concat icmd exp ",")))
+              include)
+        (setq icmd (replace-regexp-in-string ",$" "" icmd)
+              icmd (concat icmd " --type=include")))
+      (when exclude
+        (setq xcmd " --type-set=exclude:ext:")
+        (mapc (lambda (exp)
+                (setq xcmd (concat xcmd exp ",")))
+              exclude)
+        (setq xcmd (replace-regexp-in-string ",$" "" xcmd)
+              xcmd (concat xcmd " --type=noexclude"))))
+    (concat icmd xcmd)))
+
 (defun search-ack-backend (args)
   "[internal use]
 Search thing by using ACK."
@@ -494,7 +523,40 @@ Search thing by using ACK."
          (real-dirs (cddr dirs))
          (files (plist-get args :files))
          (fromfile (plist-get args :fromfile)))
-    ))
+    (eval
+     `(search:chain
+       ;; Prepare input file.
+       ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ,(when files
+          `(search:lambda
+             (with-temp-file search-temp-file
+               (mapc (lambda (path)
+                       (insert path "\n"))
+                     ,files))))
+       ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ,(when dirs
+          `(search:lambda
+             (with-current-buffer (find-file-noselect search-temp-file)
+               (mapc (lambda (path)
+                       (and (file-exists-p path)
+                            (insert (expand-file-name path) "\n")))
+                     ,dirs))))
+       (search:process-shell-to-file
+        ,(format "xargs ack -f %s <%s"
+                 (search-gen-ack-filter include exclude)
+                 (expand-file-name search-temp-file))
+        search-temp-file)
+       ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ,(when fromfile
+          `(search:lambda
+             (with-current-buffer (find-file-noselect search-temp-file)
+               (insert "\n")
+               (insert-file-contents-literally ,fromfile))))
+       ;; Start to search by using input file.
+       (search:process-shell-to-search-buffer
+        ,(format "xargs ack --nocolor \"%s\" <\"%s\" 2>/dev/null"
+                 match
+                 (expand-file-name search-temp-file)))))))
 
 (defun search-ag-backend (args)
   "[internal use]
@@ -506,7 +568,9 @@ Search thing by using AG."
          (real-dirs (cddr dirs))
          (files (plist-get args :files))
          (fromfile (plist-get args :fromfile)))
-    ))
+    (eval
+     `(search:chain
+       ))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -532,9 +596,9 @@ Search thing by using AG."
                   (format "Search %s in: " match)))))
      (cond
       ((file-regular-p path)
-       (list match :files path))
+       (list match :files `(,path)))
       ((file-directory-p path)
-       (list match :dirs `(nil ,search-ignored-paths-for-find-command ,path))))))
+       (list match :dirs `(nil nil ,path))))))
   (search-exec?)
   (when (stringp match)
     (if (< search-tasks-count search-tasks-max)

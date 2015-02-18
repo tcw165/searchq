@@ -57,21 +57,25 @@
     (define-key map [escape] 'search-toggle-search-result)
     (define-key map [?d] 'search-result-kill-item-at-point)
     map)
-  "[internal usage]
+  "[internal use]
 Keymap for `search-result-mode'.")
 
 (defvar search-result-mode-font-lock-keywords
-  `((("^\\([[:alnum:] $_\/.+-]+\\):\\([0-9]+\\)" (1 'search-file-face) (2 'search-linum-face))
-     )
+  `((;; GREP style.
+     ("^\\([[:alnum:] $_\/.+-]+\\):\\([0-9]+\\):" (1 'search-file-face) (2 'search-linum-face))
+     ;; ACK style.
+     ;; TODO: use a match function to fontify.
+     ("^\\([0-9]+\\):" (1 'search-linum-face)))
     ;; don't use syntactic fontification.
     t
     ;; Case insensitive.
     nil)
-  "[internal usage]
-Font lock keywords for `search-result-mode'.")
+  "[internal use]
+Font lock keywords for `search-result-mode'. See `font-lock-defaults' and 
+`font-lock-keywords'.")
 
 (defun search-imenu-create-index ()
-  "[internal usage]
+  "[internal use]
 Return imenu index for `search-result-mode'. See `imenu--index-alist' for the 
 format of the buffer index alist."
   ;; (when (and (string= (buffer-name) search-buffer-name)
@@ -88,7 +92,7 @@ format of the buffer index alist."
         (list (cons "Search Item" index))))))
 
 (defun search-result-is-valid-item ()
-  "[internal usage]
+  "[internal use]
 Test valid item at point."
   (save-excursion
     (beginning-of-line)
@@ -97,7 +101,7 @@ Test valid item at point."
              (looking-at "$")))))
 
 (defun search-result-clean-empty-item ()
-  "[internal usage]
+  "[internal use]
 Delete invalid item."
   (save-excursion
     (goto-char 1)
@@ -110,7 +114,7 @@ Delete invalid item."
                      (line-beginning-position 4)))))
 
 (defun search-result-kill-item-at-point ()
-  "[internal usage]
+  "[internal use]
 Delete item at point."
   (interactive)
   (if mark-active
@@ -131,7 +135,7 @@ Delete item at point."
   (and (buffer-modified-p) (save-buffer)))
 
 (defun search-result-open-item ()
-  "[internal usage]
+  "[internal use]
 Open search item."
   (interactive)
   (beginning-of-line)

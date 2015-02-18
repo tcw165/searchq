@@ -467,7 +467,7 @@ Search thing by using GREP."
        ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,@(mapcar (lambda (path)
                    `(search:process-shell-to-file
-                     ,(format "find %s %s"
+                     ,(format "find %s %s 2>/dev/null"
                               (expand-file-name path)
                               (search-gen-find-filter include exclude))
                      search-temp-file))
@@ -534,18 +534,26 @@ Search thing by using ACK."
                        (insert path "\n"))
                      ,files))))
        ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-       ,(when dirs
-          `(search:lambda
-             (with-current-buffer (find-file-noselect search-temp-file)
-               (mapc (lambda (path)
-                       (and (file-exists-p path)
-                            (insert (expand-file-name path) "\n")))
-                     ,dirs))))
-       (search:process-shell-to-file
-        ,(format "xargs ack -f %s <%s"
-                 (search-gen-ack-filter include exclude)
-                 (expand-file-name search-temp-file))
-        search-temp-file)
+       ;; ,(when dirs
+       ;;    `(search:lambda
+       ;;       (with-current-buffer (find-file-noselect search-temp-file)
+       ;;         (mapc (lambda (path)
+       ;;                 (and (file-exists-p path)
+       ;;                      (insert (expand-file-name path) "\n")))
+       ;;               ,dirs)))
+       ;;    `(search:process-shell-to-file
+       ;;      ,(format "xargs ack -f %s <%s"
+       ;;               (search-gen-ack-filter include exclude)
+       ;;               (expand-file-name search-temp-file))
+       ;;      search-temp-file))
+       ;; TODO: improve speed
+       ,@(mapcar (lambda (path)
+                   `(search:process-shell-to-file
+                     ,(format "ack -f %s %s"
+                              (search-gen-ack-filter include exclude)
+                              (expand-file-name path))
+                     search-temp-file))
+                 real-dirs)
        ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,(when fromfile
           `(search:lambda

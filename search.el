@@ -597,9 +597,38 @@ Search thing by using AG."
 ;; (search-string "def" :dirs '(("*.el") ("*.git*" "*.svn*") "/Users/boyw165/.emacs.d/oops"))
 ;;;###autoload
 (defun search-string (match &rest args)
-  "Search MATCH ..."
+  "Make a search task to search MATCH string or regular expression refer to 
+attributes ARGS. ARGS describes what files, or what directories to search.
+Search tasks is delegated to `search-backends'.
+
+Format of ARGS
+--------------
+* Search MATCH in specific files:
+  ARGS = :files '(filename1 filename2 filename3 ...)
+* Search MATCH in specific directories:
+  ARGS = :dirs '(INCLUDES EXCLUDES dirpath1 dirpath2 dirpath3 ...)
+  INCLUDES = A filter list for including files.
+             ex: '(*.md *.txt) for `search-grep-backend'.
+  EXCLUDES = A filter list for excluding files.
+             ex: '(*.git* *.svn*) for `search-grep-backend'.
+  !Note: The format of INCLUDES and EXCLUDES depends on the backend you're using.
+* Search MATCH in files listed in an input file.
+  ARGS = :fromfile filename
+
+Example
+-------
+* Search MATCH in specific files and directories.
+  (search-string MATCH :files '(/path/a /path/b) :dirs '(nil nil /path/dir1 /path/dir2))
+* Search MATCH in files listed in an input file.
+  (search-string MATCH :fromfile /path/inputfile)
+* Search MATCH in specific directories and ignore subversion files.
+  (search-string MATCH :dirs '(nil (*.git* *.svn*) /path/dir1 /path/dir2))
+"
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  ;; (search-string "def" :dirs '(nil ("*.git*" "*.svn*") "/usr/include"))
+  ;; ;; for search-grep-backend.
+  ;; (search-string "int" :dirs '(nil ("*.git*" "*.svn*") "/usr/include"))
+  ;; ;; for search-ack-backend.
+  ;; (search-string "typedef" :dirs '(("h" "hxx") nil "/usr/include"))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (interactive
    (let* ((match (read-from-minibuffer "Search: "))
@@ -643,7 +672,8 @@ Search thing by using AG."
 
 ;;;###autoload
 (defun search-string-command (cmd)
-  "Take CMD arguement and execute it asynchronously."
+  "Very similar to `search-string' but it takes CMD arguement and pass it to 
+`search-backends' directly."
   (interactive
    (list (read-from-minibuffer
           "Search Command: "

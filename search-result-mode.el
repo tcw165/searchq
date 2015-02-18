@@ -61,11 +61,15 @@
 Keymap for `search-result-mode'.")
 
 (defvar search-result-mode-font-lock-keywords
-  `((;; GREP style.
+  `((;; Delimiter and match string.
+     (,(format "^%s\\(.*\\)" (regexp-quote (car search-delimiter))) (1 'search-highlight-face))
+     ;; GREP style.
      ("^\\([[:alnum:] $_\/.+-]+\\):\\([0-9]+\\):" (1 'search-file-face) (2 'search-linum-face))
      ;; ACK style.
-     ;; TODO: use a match function to fontify.
-     ("^\\([0-9]+\\):" (1 'search-linum-face)))
+     ("^\\([a-Z]:\\\\\\|~/\\|/\\).*$" . 'search-file-face)
+     ("^\\([0-9]+\\):" (1 'search-linum-face))
+     ;; TODO: AG style.
+     )
     ;; don't use syntactic fontification.
     t
     ;; Case insensitive.
@@ -157,8 +161,6 @@ Open search item."
   (remove-overlays)
   (setq font-lock-defaults search-result-mode-font-lock-keywords
         truncate-lines t)
-  ;; Set local highlight faces.
-  (setq-local hl-highlight-special-faces '(search-title-face))
   ;; Set local imenu generator.
   (setq-local imenu-create-index-function 'search-imenu-create-index)
   ;; Rename buffer to `search-buffer-name'
@@ -184,19 +186,12 @@ by `hl-line-mode' or `global-hl-line-mode'."
 by `hl-line-mode' or `global-hl-line-mode'."
   :group 'search-result-face)
 
-(defface search-title-face
-  '((t (:background "gold" :foreground "black" :weight bold :height 1.5)))
-  "Default face for highlighting keyword in definition window."
-  :group 'search-result-face)
-
-(defface search-separator-face
-  '((t (:background "LightCyan1" :foreground "gray40" :weight bold :height 1.1)))
-  "Default face for highlighting keyword in definition window."
-  :group 'search-result-face)
-
 (defface search-highlight-face
-  '((t (:inherit default :weight bold)))
+  '((t (:foreground "gold" :background "black" :weight bold :height 1.3)))
   "Default face for highlighting keyword in definition window."
   :group 'search-result-face)
+
+;; Add faces to `hl-highlight-special-faces'.
+(add-to-list 'hl-highlight-special-faces 'search-highlight-face)
 
 (provide 'search-result-mode)

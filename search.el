@@ -1,4 +1,4 @@
-;;; search.el --- Framework of queued search tasks. Support GREP, ACK, AG and more.
+;;; search.el --- Framework of queued search tasks using GREP, ACK, AG and more.
 ;;
 ;; Copyright (C) 2014-2015
 ;;
@@ -22,6 +22,12 @@
 ;; along with this program.  I not, see <http://www.gnu.org/licenses/>.
 ;;
 ;;; Commentary:
+;;
+;; A search framework which let you search string or regular expression
+;; in the background and queue the search tasks. It uses `find`, `grep`,
+;; `ack` or `ag` command as its searching backends. In addition, the
+;; search result can be a jotting. So it keeps the search result for
+;; you and provides editing function.
 ;;
 ;; TODO
 ;; ----
@@ -663,13 +669,14 @@ Search thing by using AG."
 (defun search-toggle-search-result ()
   (interactive)
   (if (string= (buffer-name) search-buffer-name)
-      ;; TODO: Kill buffer without asking.
+      ;; Hide search buffer ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
       (if (search-running?)
           ;; TODO: Hide buffer instead of killing it.
           ()
         (and (buffer-modified-p)
              (save-buffer))
         (kill-buffer))
+    ;; Show search buffer ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (if (get-buffer search-buffer-name)
         (switch-to-buffer search-buffer-name)
       (find-file search-saved-file)

@@ -3,7 +3,7 @@
 ;; Copyright (C) 2014-2015
 ;;
 ;; Author: boyw165
-;; Version: 20150209.1800
+;; Version: 20150219.1800
 ;; Package-Requires: ((emacs "24.3") (hl-anything "0.0.9"))
 ;;
 ;; This file is NOT part of GNU Emacs.
@@ -31,11 +31,9 @@
 ;;
 ;; TODO
 ;; ----
-;; * Support ACK.
 ;; * Support AG.
-;; * Improve `search-result-mode'.
+;; * Improve interaction of `search-thing' and `search-thing-command'.
 ;; * Cancel individual search task.
-;; * `search-toggle-search-result' shouldn't always kill search buffer.
 ;; * Add menu items and toolbar buttons.
 ;; * Open with search-result will cause hl-highlight-mode work incorrectly.
 ;; 
@@ -43,7 +41,7 @@
 ;;
 ;;; Change Log:
 ;;
-;; 2015-02-15
+;; 2015-02-19
 ;; * Initial release.
 ;; * Support queued search task.
 ;; * Support both of asynchronous process and synchronous script task.
@@ -64,14 +62,14 @@
 (defconst search-default-backends
   '(("FIND and GREP" ("find" "grep") "find `pwd`|xargs grep -nH -e ${cursor}" search-grep-backend)
     ("ACK only"      ("ack")         "ack --nocolor ${cursor} `pwd`"          search-ack-backend)
-    ("AG only"       ("ag")          ""                                       search-ag-backend))
+    ("AG only"       ("ag")          "echo constructing..."                   search-ag-backend))
   "Default search backends. The format:
 The 1st element is description string.
 The 2nd element is a exec path list to be tested.
 The 3rd element is a command template string.
 The 4th element is the backend which is the doer of everything.")
 
-(defconst search-buffer-name "*Search Result*"
+(defconst search-buffer-name "Search-Result"
   "Search buffer name.")
 
 (defconst search-temp-buffer-name "*Search Temp*"
@@ -107,8 +105,8 @@ The 4th element is the backend which is the doer of everything.")
   :group 'search)
 
 (defcustom search-temp-file (expand-file-name "/var/tmp/.search-tmp")
-  "Temporary file for search. e.g. as an input file with context of files 
-list"
+  "Temporary file for search. e.g. as an input file with context of listed 
+files."
   :type 'string
   :group 'search)
 
@@ -118,7 +116,7 @@ list"
   :group 'search)
 
 (defcustom search-timer-delay 0.3
-  "Delay seconds for every search task."
+  "Delay seconds for every search task. Try don't make it less than 0.3."
   :type 'integer
   :group 'search)
 
@@ -400,6 +398,7 @@ Search task to clean temporary file.")
 
 (defvar search-print-closed-delimiter
   (search:lambda-to-search-buffer
+    (setq search-tasks-count (1- search-tasks-count))
     (goto-char (point-max))
     (unless (looking-back "[\r\n]")
       (insert "\n"))
@@ -594,9 +593,9 @@ Search thing by using AG."
 ;; :files      '(PATH1 PATH2 PATH3 ...)
 ;; :fromfile   PATH
 ;;
-;; (search-string "def" :dirs '(("*.el") ("*.git*" "*.svn*") "/Users/boyw165/.emacs.d/oops"))
+;; (search-thing "def" :dirs '(("*.el") ("*.git*" "*.svn*") "/Users/boyw165/.emacs.d/oops"))
 ;;;###autoload
-(defun search-string (match &rest args)
+(defun search-thing (match &rest args)
   "Make a search task to search MATCH string or regular expression refer to 
 attributes ARGS. ARGS describes what files, or what directories to search.
 Search tasks is delegated to `search-backends'.
@@ -618,20 +617,18 @@ Format of ARGS
 Example
 -------
 * Search MATCH in specific files and directories.
-  (search-string MATCH :files '(/path/a /path/b) :dirs '(nil nil /path/dir1 /path/dir2))
+  (search-thing MATCH :files '(/path/a /path/b) :dirs '(nil nil /path/dir1 /path/dir2))
 * Search MATCH in files listed in an input file.
-  (search-string MATCH :fromfile /path/inputfile)
+  (search-thing MATCH :fromfile /path/inputfile)
 * Search MATCH in specific directories and ignore subversion files.
-  (search-string MATCH :dirs '(nil (*.git* *.svn*) /path/dir1 /path/dir2))
+  (search-thing MATCH :dirs '(nil (*.git* *.svn*) /path/dir1 /path/dir2))
 "
-  ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  ;; ;; for search-grep-backend.
-  ;; (search-string "int" :dirs '(nil ("*.git*" "*.svn*") "/usr/include"))
-  ;; ;; for search-ack-backend.
-  ;; (search-string "typedef" :dirs '(("h" "hxx") nil "/usr/include"))
-  ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (interactive
-   (let* ((match (read-from-minibuffer "Search: "))
+   (let* ((match (read-from-minibuffer
+                  "Search: "
+                  (let ((bounds (bounds-of-thing-at-point 'symbol)))
+                    (and bounds (buffer-substring-no-properties (car bounds)
+                                                                (cdr bounds))))))
           (path (expand-file-name
                  ;; TODO: read file or directory name.
                  ;; TODO: history.
@@ -668,11 +665,12 @@ Example
       (message
        "Search string, \"%s\", is denied due to full queue."
        match))
+    ;; Return tasks count.
     search-tasks-count))
 
 ;;;###autoload
-(defun search-string-command (cmd)
-  "Very similar to `search-string' but it takes CMD arguement and pass it to 
+(defun search-thing-command (cmd)
+  "Very similar to `search-thing' but it takes CMD arguement and pass it to 
 `search-backends' directly."
   (interactive
    (list (read-from-minibuffer
@@ -700,17 +698,15 @@ Example
   (interactive)
   (if (string= (buffer-name) search-buffer-name)
       ;; Hide search buffer ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-      (if (search-running?)
-          ;; TODO: Hide buffer instead of killing it.
-          ()
+      (progn
         (and (buffer-modified-p)
              (save-buffer))
-        (kill-buffer))
+        (switch-to-prev-buffer))
     ;; Show search buffer ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (if (get-buffer search-buffer-name)
         (switch-to-buffer search-buffer-name)
-      (find-file search-saved-file)
-      (rename-buffer search-buffer-name))))
+      ;; `search-result-mode' is applied automatically.
+      (find-file search-saved-file))))
 
 ;;;###autoload
 (defun search-stop (index)

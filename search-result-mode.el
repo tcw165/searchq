@@ -1,4 +1,4 @@
-;; Copyright (C) 2014
+;; Copyright (C) 2014-2015
 ;;
 ;; Author: BoyW165
 ;;
@@ -19,12 +19,12 @@
 ;;
 ;;; Commentary:
 ;;
+;; The major mode for `search-saved-file' file. It provides navigation and
+;; editing functions.
+;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
-;;; Change Log:
-;;
-;; 2015-02-08 (0.0.1)
-;;    Initial release.
+;;; Code:
 
 ;; GNU library.
 (require 'font-lock)
@@ -52,7 +52,7 @@
     (suppress-keymap map t)
     ;; (define-key map [up] )
     ;; (define-key map [down] )
-    (define-key map [return] 'search-result-open-item)
+    (define-key map [return] 'search-result-find-file)
     (define-key map [?q] 'search-toggle-search-result)
     (define-key map [escape] 'search-toggle-search-result)
     (define-key map [?d] 'search-result-kill-item-at-point)
@@ -138,21 +138,28 @@ Delete item at point."
                         (line-beginning-position 2))))
   (and (buffer-modified-p) (save-buffer)))
 
-(defun search-result-open-item ()
+(defun search-result-find-file ()
   "[internal use]
 Open search item."
   (interactive)
-  (beginning-of-line)
-  (when (looking-at "^\\(.+\\):\\([0-9]+\\):")
-    (let ((file (match-string 1))
-          (linum (string-to-int (match-string 2))))
-      (message "ready to open:%s" file)
-      (when (file-exists-p file)
-        (find-file file)
-        (goto-char 1)
-        (forward-line (1- linum))
-        (end-of-line)
-        (recenter 3)))))
+  (let (file linum)
+    (save-excursion
+      (beginning-of-line)
+      (cond
+       ;; GREP style ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ((looking-at "^\\(.+\\):\\([0-9]+\\):")
+        (setq file (match-string 1)
+              linum (string-to-int (match-string 2))))
+       ;; ACK style ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       (
+        )))
+    ;; Open file if any.
+    (when (file-exists-p file)
+      (find-file file)
+      (goto-char 1)
+      (forward-line (1- linum))
+      (end-of-line)
+      (recenter 3))))
 
 ;;;###autoload
 (define-derived-mode search-result-mode nil "Search-Result"
@@ -194,4 +201,10 @@ by `hl-line-mode' or `global-hl-line-mode'."
 ;; Add faces to `hl-highlight-special-faces'.
 (add-to-list 'hl-highlight-special-faces 'search-highlight-face)
 
+;; Integrate with `history' if any.
+(when (featurep 'history)
+  (add-to-list 'history-advised-before-functions 'search-result-find-file)
+  (add-to-list 'history-advised-after-functions 'search-result-find-file))
+
 (provide 'search-result-mode)
+;;; search-result-mode.el ends here

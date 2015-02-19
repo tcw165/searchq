@@ -9,10 +9,10 @@ Demo
 ----
 ![screenshot](demo/all.gif "demo")
 
-Basic Usage - `search-string` and `search-string-command`
----------------------------------------------------------
-* `search-string`
-* `search-string-command`
+Basic Usage - `search-thing` and `search-thing-command`
+-------------------------------------------------------
+* `search-thing`
+* `search-thing-command`
 * `search-stop-all`
 
 Advanced Usage

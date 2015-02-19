@@ -34,7 +34,6 @@
 ;; * Support AG.
 ;; * Improve interaction of `search-thing' and `search-thing-command'.
 ;; * Cancel individual search task.
-;; * Add menu items and toolbar buttons.
 ;; * Open with search-result will cause hl-highlight-mode work incorrectly.
 ;; 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -51,7 +50,11 @@
 ;;; Code:
 
 ;; GNU library.
+(require 'font-lock)
+(require 'hl-line)
 (require 'ido)
+(require 'imenu)
+(require 'saveplace)
 
 ;; 3rd party libary.
 (require 'hl-anything)
@@ -60,19 +63,23 @@
   "Search")
 
 (defconst search-default-backends
-  '(("FIND and GREP" ("find" "grep") "find `pwd`|xargs grep -nH -e ${cursor}" search-grep-backend)
-    ("ACK only"      ("ack")         "ack --nocolor ${cursor} `pwd`"          search-ack-backend)
-    ("AG only"       ("ag")          "echo constructing..."                   search-ag-backend))
+  '(("FIND and GREP" ("find" "grep") "find $pwd|xargs grep -nH -e \"$0\" 2>/dev/null"
+     search-grep-backend)
+    ("ACK only"      ("ack")         "ack --nocolor '$0' $pwd 2>/dev/null"
+     search-ack-backend)
+    ("AG only"       ("ag")          "echo constructing..."
+     search-ag-backend))
   "Default search backends. The format:
-The 1st element is description string.
-The 2nd element is a exec path list to be tested.
-The 3rd element is a command template string.
-The 4th element is the backend which is the doer of everything.")
+* The 1st element is description string.
+* The 2nd element is a exec path list to be tested.
+* The 3rd element is a command template string.
+  $0 is the cursor position; $pwd is the current directory.
+* The 4th element is the backend which is the doer of everything.")
 
 (defconst search-buffer-name "Search-Result"
   "Search buffer name.")
 
-(defconst search-temp-buffer-name "*Search Temp*"
+(defconst search-temp-buffer-name "*Search-Temp*"
   "Temporary search buffer name.")
 
 (defcustom search-backends (nth 0 search-default-backends)
@@ -427,17 +434,17 @@ Just a dummy backend. See `search-thing'.")
 (defun search-gen-find-filter (include exclude)
   "[internal use]
 Take INCLUDE and EXCLUDE arguments and generate FIND command string. The format
-depends on the FIND's option, --path.
-e.g. *.txt is for GREP command."
+depends on the FIND's option, --path."
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ;; (search-gen-find-filter nil nil)
   ;; (search-gen-find-filter '("*.el" "*.txt") nil)
   ;; (search-gen-find-filter '("*.el" "*.txt") '(".git" ".svn"))
   ;; (search-gen-find-filter nil '(".git" ".svn"))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  (let (icmd xcmd)
-    (setq exclude (append exclude search-ignored-paths-for-find-command))
-    (ignore-errors
+  (ignore-errors
+    (let (icmd xcmd)
+      (setq exclude (append exclude search-ignored-paths-for-find-command))
+      
       (when include
         (mapc (lambda (exp)
                 (setq icmd (concat icmd " -path \"" exp "\"")))
@@ -445,8 +452,8 @@ e.g. *.txt is for GREP command."
       (when exclude
         (mapc (lambda (exp)
                 (setq xcmd (concat xcmd " -not -path \"" exp "\"")))
-              exclude)))
-    (concat icmd xcmd)))
+              exclude))
+      (concat icmd xcmd))))
 
 (defun search-grep-backend (args)
   "[internal use]
@@ -492,31 +499,36 @@ Search thing by using GREP."
 (defun search-gen-ack-filter (include exclude)
   "[internal use]
 Take INCLUDE and EXCLUDE arguments and generate ACK command string. The format
-depends on ACK's option, --type-set=include:ext:??? for include; 
---type-set=exclude:ext:???."
+depends on ACK's option,
+--type-set=include:ext:??? for includes; 
+--type-set=exclude:ext:??? for excludes."
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ;; (search-gen-ack-filter nil nil)
   ;; (search-gen-ack-filter '("el" "txt" "md") nil)
-  ;; (search-gen-ack-filter nil '(".git" ".svn"))
-  ;; (search-gen-ack-filter '("el" "txt") '(".git" ".svn"))
+  ;; (search-gen-ack-filter nil '("git" "svn"))
+  ;; (search-gen-ack-filter '("el" "txt") '("git" "svn"))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  (let (icmd xcmd)
-    (ignore-errors
+  (ignore-errors
+    (let (icmd xcmd)
       (when include
         (setq icmd " --type-set=include:ext:")
         (mapc (lambda (exp)
                 (setq icmd (concat icmd exp ",")))
               include)
-        (setq icmd (replace-regexp-in-string ",$" "" icmd)
+        (setq icmd (progn
+                     (string-match "\\(.*\\),$" icmd)
+                     (match-string 1 icmd))
               icmd (concat icmd " --type=include")))
       (when exclude
         (setq xcmd " --type-set=exclude:ext:")
         (mapc (lambda (exp)
                 (setq xcmd (concat xcmd exp ",")))
               exclude)
-        (setq xcmd (replace-regexp-in-string ",$" "" xcmd)
-              xcmd (concat xcmd " --type=noexclude"))))
-    (concat icmd xcmd)))
+        (setq xcmd (progn
+                     (string-match "\\(.*\\),$" xcmd)
+                     (match-string 1 xcmd))
+              xcmd (concat xcmd " --type=noexclude")))
+      (concat icmd xcmd))))
 
 (defun search-ack-backend (args)
   "[internal use]
@@ -588,12 +600,6 @@ Search thing by using AG."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; :match      REGEXP or simple string
-;; :dirs       '(INCLUDE_LIST EXCLUDE_LIST PATH1 PATH2 PATH3 ...)
-;; :files      '(PATH1 PATH2 PATH3 ...)
-;; :fromfile   PATH
-;;
-;; (search-thing "def" :dirs '(("*.el") ("*.git*" "*.svn*") "/Users/boyw165/.emacs.d/oops"))
 ;;;###autoload
 (defun search-thing (match &rest args)
   "Make a search task to search MATCH string or regular expression refer to 
@@ -673,25 +679,42 @@ Example
   "Very similar to `search-thing' but it takes CMD arguement and pass it to 
 `search-backends' directly."
   (interactive
-   (list (read-from-minibuffer
-          "Search Command: "
-          (nth 2 search-backends))))
-  ;; Redirect error to null device.
-  (setq cmd (concat cmd " 2>/dev/null"))
-  (search-exec?)
-  (search-prepare-search-buffer)
-  (funcall search-start-action-function)
-  ;; Start searching.
-  (search:chain
-   ;; Print opened delimiter.
-   (eval
-    `(search:lambda-to-search-buffer
-       (goto-char (point-max))
-       (insert (car search-delimiter) ,cmd "\n")))
-   ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   (search:process-shell-to-search-buffer cmd)
-   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   search-print-closed-delimiter))
+   (let* ((prompt "Search Command: ")
+          (cmd (replace-regexp-in-string
+                "\\$pwd" (concat "\"" default-directory "\"")
+                (nth 2 search-backends)))
+          (pos (string-match "\\$0" cmd)))
+     (minibuffer-with-setup-hook
+         (eval
+          `(lambda ()
+             (goto-char ,(+ (length prompt) pos 1))))
+       (list (read-from-minibuffer
+              prompt
+              (concat (substring cmd 0 pos)
+                      (substring cmd (match-end 0))))))))
+  ;; Try to get thing to be searched.
+  (let ((thing (let* ((cmd-sample (replace-regexp-in-string
+                                   "\\$pwd" (concat "\"" default-directory "\"")
+                                   (nth 2 search-backends)))
+                      (regexp (replace-regexp-in-string
+                               "\\\\\\$0" "\\\\(.*\\\\)"
+                               (regexp-quote cmd-sample))))
+                 (and (string-match regexp cmd)
+                      (match-string 1 cmd)))))
+    (search-exec?)
+    (search-prepare-search-buffer)
+    (funcall search-start-action-function)
+    ;; Start searching.
+    (search:chain
+     ;; Print opened delimiter.
+     (eval
+      `(search:lambda-to-search-buffer
+         (goto-char (point-max))
+         (insert (car search-delimiter) ,(or thing cmd) "\n")))
+     ;; Delegate to `search-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     (search:process-shell-to-search-buffer cmd)
+     ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     search-print-closed-delimiter)))
 
 ;;;###autoload
 (defun search-toggle-search-result ()
@@ -732,7 +755,186 @@ Example
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Major Mode for Search Result ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(require 'search-result-mode)
+(defgroup search-result nil
+  "Project result mode for .result file."
+  :group 'search)
+
+(defcustom search-result-mode-hook `(save-place-find-file-hook
+                                     font-lock-mode
+                                     linum-mode
+                                     hl-line-mode)
+  "Hook run when entering `search-result-mode' mode."
+  :type 'hook
+  :group 'search-result)
+
+(defvar search-result-mode-map
+  (let ((map (make-sparse-keymap)))
+    (suppress-keymap map t)
+    ;; (define-key map [up] )
+    ;; (define-key map [down] )
+    (define-key map [return] 'search-result-find-file)
+    (define-key map [?q] 'search-toggle-search-result)
+    (define-key map [escape] 'search-toggle-search-result)
+    (define-key map [?d] 'search-result-kill-item-at-point)
+    map)
+  "[internal use]
+Keymap for `search-result-mode'.")
+
+(defvar search-result-mode-font-lock-keywords
+  `((;; Delimiter and match string.
+     (,(format "^%s\\(.*\\)" (regexp-quote (car search-delimiter))) (1 'search-highlight-face))
+     ;; GREP style.
+     ("^\\([[:alnum:] $_\/.+-]+\\):\\([0-9]+\\):" (1 'search-file-face) (2 'search-linum-face))
+     ;; ACK style.
+     ("^\\([a-Z]:\\\\\\|~/\\|/\\).*$" . 'search-file-face)
+     ("^\\([0-9]+\\):" (1 'search-linum-face))
+     ;; TODO: AG style.
+     )
+    ;; don't use syntactic fontification.
+    t
+    ;; Case insensitive.
+    nil)
+  "[internal use]
+Font lock keywords for `search-result-mode'. See `font-lock-defaults' and 
+`font-lock-keywords'.")
+
+(defun search-imenu-create-index ()
+  "[internal use]
+Return imenu index for `search-result-mode'. See `imenu--index-alist' for the 
+format of the buffer index alist."
+  ;; (when (and (string= (buffer-name) search-buffer-name)
+  ;;            (not (search-running?)))
+  (when (string= (buffer-name) search-buffer-name)
+    (let (index)
+      (save-excursion
+        (goto-char (point-max))
+        (while (re-search-backward
+                (concat "^" (regexp-quote (car search-delimiter)) "\\(.*\\)$")
+                nil t)
+          (push (cons (match-string-no-properties 1)
+                      (line-end-position)) index))
+        (list (cons "Search Task" index))))))
+
+(defun search-result-is-valid-item ()
+  "[internal use]
+Test valid item at point."
+  (save-excursion
+    (beginning-of-line)
+    (not (or (looking-at (regexp-quote (car search-delimiter)))
+             (looking-at (regexp-quote (cdr search-delimiter)))
+             (looking-at "$")))))
+
+(defun search-result-clean-empty-item ()
+  "[internal use]
+Delete invalid item."
+  (save-excursion
+    (goto-char 1)
+    (while (re-search-forward (format "%s.*[\n\r]%s"
+                                      (regexp-quote (car search-delimiter))
+                                      (regexp-quote (cdr search-delimiter)))
+                              nil t)
+      (goto-char (match-beginning 0))
+      (delete-region (line-beginning-position 1)
+                     (line-beginning-position 4)))))
+
+(defun search-result-kill-item-at-point ()
+  "[internal use]
+Delete item at point."
+  (interactive)
+  (if mark-active
+      (let ((end-mark (set-marker (copy-marker (mark-marker) t) (region-end))))
+        ;; TODO: Large region slows very much.
+        (goto-char (region-beginning))
+        (beginning-of-line)
+        (setq mark-active nil)
+        (while (< (point) (marker-position end-mark))
+          (if (search-result-is-valid-item)
+              (delete-region (line-beginning-position 1)
+                             (line-beginning-position 2))
+            (forward-line)))
+        (set-marker end-mark nil))
+    (and (search-result-is-valid-item)
+         (delete-region (line-beginning-position 1)
+                        (line-beginning-position 2))))
+  (and (buffer-modified-p) (save-buffer)))
+
+(defun search-result-find-file ()
+  "[internal use]
+Open search item."
+  (interactive)
+  (let (file linum)
+    (save-excursion
+      (beginning-of-line)
+      (cond
+       ;; GREP style ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ((looking-at "^\\(.+\\):\\([0-9]+\\):")
+        (setq file (match-string 1)
+              linum (string-to-int (match-string 2))))
+       ;; ACK style ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       (
+        )))
+    ;; Open file if any.
+    (when (file-exists-p file)
+      (find-file file)
+      (goto-char 1)
+      (forward-line (1- linum))
+      (end-of-line)
+      (recenter 3))))
+
+;;;###autoload
+(define-derived-mode search-result-mode nil "Search-Result"
+  "Major mode for search buffers."
+  :group 'result-group
+  (remove-overlays)
+  (setq font-lock-defaults search-result-mode-font-lock-keywords
+        truncate-lines t)
+  ;; Set local imenu generator.
+  (setq-local imenu-create-index-function 'search-imenu-create-index)
+  ;; Rename buffer to `search-buffer-name'
+  (rename-buffer search-buffer-name)
+  (add-hook 'before-save-hook 'search-result-clean-empty-item nil t))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Faces ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defgroup search-result-face nil
+  "Additional faces for `hl-anything'."
+  :group 'search-result)
+
+(defface search-file-face
+  '((t (:foreground "blue" :underline t :weight bold)))
+  "Default face for file path. Suggest no background, which will be overridden
+by `hl-line-mode' or `global-hl-line-mode'."
+  :group 'search-result-face)
+
+(defface search-linum-face
+  '((t (:foreground "maroon1")))
+  "Default face for linum number. Suggest no background, which will be overridden
+by `hl-line-mode' or `global-hl-line-mode'."
+  :group 'search-result-face)
+
+(defface search-highlight-face
+  '((t (:foreground "gold" :background "black" :weight bold :height 1.3)))
+  "Default face for highlighting keyword in definition window."
+  :group 'search-result-face)
+
+;; Add faces to `hl-highlight-special-faces'.
+(add-to-list 'hl-highlight-special-faces 'search-highlight-face)
+
+;; Integrate with `history' if any.
+(when (featurep 'history)
+  (add-to-list 'history-advised-before-functions 'search-result-find-file)
+  (add-to-list 'history-advised-after-functions 'search-result-find-file))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  Menu & Toolbar ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Menu items.
+  ;; Tool-bar buttons.
+(when tool-bar-mode
+  (define-key-after tool-bar-map [search-thing]
+    '(menu-item "Search Thing" search-thing
+                :image (find-image '((:type xpm :file "images/search-thing.xpm"))))))
 
 (provide 'search)
 ;;; search.el ends here

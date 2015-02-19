@@ -775,7 +775,7 @@ Example
     (define-key map [return] 'search-result-find-file)
     (define-key map [?q] 'search-toggle-search-result)
     (define-key map [escape] 'search-toggle-search-result)
-    (define-key map [?d] 'search-result-kill-item-at-point)
+    (define-key map [?d] 'search-result-delete-item-atpt)
     map)
   "[internal use]
 Keymap for `search-result-mode'.")
@@ -837,7 +837,7 @@ Delete invalid item."
       (delete-region (line-beginning-position 1)
                      (line-beginning-position 4)))))
 
-(defun search-result-kill-item-at-point ()
+(defun search-result-delete-item-atpt ()
   "[internal use]
 Delete item at point."
   (interactive)

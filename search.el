@@ -869,7 +869,7 @@ Open search item."
        ;; GREP style ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ((looking-at "^\\(.+\\):\\([0-9]+\\):")
         (setq file (match-string 1)
-              linum (string-to-int (match-string 2))))
+              linum (string-to-number (match-string 2))))
        ;; ACK style ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        (
         )))

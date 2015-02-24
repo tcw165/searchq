@@ -1,7 +1,7 @@
-Queue The Search in Background, Make Search as Jotting and more
-===============================================================
+Queue The Search Tasks, Run Them In The Background And More
+===========================================================
 
-A search framework which let you search string or regular expression in the background and queue the search tasks. It uses `find`, `grep`, `ack` or `ag` command as its searching backends. In addition, the search result can be a jotting. So it keeps the search result for you and provides editing function.
+A search framework which let you search string or regular expression **in the background** and queue the search tasks. It uses `find`, `grep`, `ack` or `ag` command as its searching backends. In addition, **the search result can be a jotting**. So it keeps the search result for you and provides editing function.
 
 The code is still young, feel free to give me adivces.
 
@@ -67,7 +67,7 @@ Search Result
 
 `self-insert-command` is disabled in the result buffer. But it provides following editing functions:
 
-* `searchq-toggle-searchq-result` to toggle result buffer (show it when it's hidden; hide it when it's present).
+* `searchq-toggle-result` to toggle result buffer (show it when it's hidden; hide it when it's present).
 * `searchq-result-delete-item-atpt` to delete unwanted results.
 * Show outline with `imenu`.
 

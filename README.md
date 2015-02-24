@@ -14,7 +14,7 @@ Demo
 Basic Usage - `searchq-search`
 ------------------------------
 
-Command **`searchq-search`** takes **MATCH** string and optional **ATTRIBUTES** properties list, then creates a search task created by `searchq-backends`. 
+Command **`searchq-search`** takes **MATCH** string and optional **ATTRIBUTES** properties list, then creates a search task by `searchq-backends`. 
 
 ![screenshot](demo/toolbar.png "toolbar")
 

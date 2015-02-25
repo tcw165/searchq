@@ -1,3 +1,5 @@
+[![MELPA](http://melpa.org/packages/searchq-badge.svg)](http://melpa.org/#/searchq)
+
 Queue The Search Tasks, Run Them In The Background And More
 ===========================================================
 

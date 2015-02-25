@@ -56,8 +56,8 @@
 (require 'imenu)
 (require 'saveplace)
 
-(defgroup search nil
-  "Search")
+(defgroup searchq nil
+  "Framework of queued search tasks using GREP, ACK, AG and more.")
 
 (defconst searchq-default-backends
   '(("FIND and GREP" ("find" "grep") "find $pwd|xargs grep -nH -e \"$0\" 2>/dev/null"
@@ -90,12 +90,12 @@
                        (repeat :tag "Necessary Exec List" (string :tag "Name"))
                        (string :tag "Command Sample")
                        (function :tag "Backend Function")))
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-ignored-paths-for-find-command '("*.git*" "*.svn*")
   "Ignored paths for FIND command."
   :type '(repeat string)
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-saved-file (expand-file-name "~/.emacs.d/.search")
   "File for cached search result."
@@ -106,39 +106,39 @@
            (add-to-list 'auto-mode-alist
                         `(,(format "\\%s\\'" (file-name-nondirectory val))
                           . searchq-result-mode))))
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-temp-file (expand-file-name "/var/tmp/.searchq-tmp")
   "Temporary file for search. e.g. as an input file with context of listed 
 files."
   :type 'string
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-tasks-max 5
   "Maximum length of the task queue."
   :type 'integer
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-timer-delay 0.3
   "Delay seconds for every search task. Try don't make it less than 0.3."
   :type 'integer
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-delimiter '(">>>>>>>>>> " . "<<<<<<<<<<")
   "Delimiter of every search task. Default is markdown style."
   :type '(cons (match :tag "open delimiter")
                (match :tag "close delimiter"))
-  :group 'search)
+  :group 'searchq)
 
-(defcustom searchq-start-action-function 'searchq-switch-to-searchq-buffer
+(defcustom searchq-start-action-function 'searchq-switch-to-search-buffer
   "Action function whenever new search starts."
   :type 'function
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-prompt-function 'searchq-default-prompt-function
   "Prompt function."
   :type 'function
-  :group 'search)
+  :group 'searchq)
 
 (defvar searchq-tasks nil
   "Search tasks queue. See `searchq-create-task' for struct format.")
@@ -182,7 +182,8 @@ Evaluate BODY in the search buffer."
      ,@body))
 
 (defun searchq-prepare-searchq-buffer ()
-  "Prepare search buffer."
+  "[internal use]
+Prepare search buffer."
   (unless (get-buffer searchq-buffer-name)
     (searchq-with-searchq-buffer
       (and (file-exists-p searchq-saved-file)
@@ -211,9 +212,13 @@ Append TASK to `searchq-tasks' and evaluate it later. See `searchq-create-task'.
                                (list task searchq-destructor-task)))))
 
 (defun searchq-list-tasks ()
+  "[internal use]
+List search tasks."
   )
 
-(defun searchq-switch-to-searchq-buffer ()
+(defun searchq-switch-to-search-buffer ()
+  "[internal use]
+Switch to search buffer."
   (switch-to-buffer searchq-buffer-name))
 
 (defun searchq-doer ()

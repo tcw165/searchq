@@ -59,13 +59,13 @@ Example:
 ```
 
 Stop Running Tasks - `searchq-stop-all`
---------------------------------------
+---------------------------------------
 
 Command **`searchq-stop-all`** stops the running task and kills remaining search tasks.
 
 
-Search Result
--------------
+Search Result - `searchq-toggle-result`
+---------------------------------------
 
 `self-insert-command` is disabled in the result buffer. But it provides following editing functions:
 

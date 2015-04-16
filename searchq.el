@@ -141,19 +141,24 @@ files."
   :group 'searchq)
 
 (defvar searchq-tasks nil
-  "Search tasks queue. See `searchq-create-task' for struct format.")
+  "[internal use]
+Search tasks queue. See `searchq-create-task' for struct format.")
 
 (defvar searchq-tasks-count 0
-  "Search tasks count.")
+  "[internal use]
+Search tasks count.")
 
 (defvar searchq-proc nil
-  "Search task process.")
+  "[internal use]
+Search task process.")
 
 (defvar searchq-timer nil
-  "A delay timer for evaluating the queued tasks.")
+  "[internal use]
+A delay timer for evaluating the queued tasks.")
 
 (defvar searchq-prompt-timer nil
-  "A timer for showing prompt animation.")
+  "[internal use]
+A timer for showing prompt animation.")
 
 (defun searchq-exec? ()
   "[internal use]
@@ -209,7 +214,7 @@ Append TASK to `searchq-tasks' and evaluate it later. See `searchq-create-task'.
     ;; Append task and update destruct task.
     (setq searchq-tasks (delq searchq-destructor-task searchq-tasks)
           searchq-tasks (append searchq-tasks
-                               (list task searchq-destructor-task)))))
+                                (list task searchq-destructor-task)))))
 
 (defun searchq-list-tasks ()
   "[internal use]
@@ -237,22 +242,22 @@ Doer decide when and what to process next."
     (when searchq-tasks
       (cond
        ((null (plist-get task :async))
-        (searchq-setup-doer))))))
+        (searchq-delay-doer))))))
 
-(defun searchq-setup-doer ()
+(defun searchq-delay-doer ()
   "[internal use]
 Run `searchq-doer' after a tiny delay."
   (and (timerp searchq-timer)
        (setq searchq-timer (cancel-timer searchq-timer)))
   (setq searchq-timer (run-with-idle-timer
-                      searchq-timer-delay nil
-                      'searchq-doer)))
+                       searchq-timer-delay nil
+                       'searchq-doer)))
 
 (defun searchq-start-dequeue ()
   "[internal use]
 Start to evaluate search task in the queue."
   ;; Setup timer
-  (searchq-setup-doer)
+  (searchq-delay-doer)
   ;; Start prmopt.
   (searchq-start-prompt))
 
@@ -275,8 +280,8 @@ Default prompt function."
     (searchq-message "Search ...%s" char)
     (setq searchq-prompt-animation (cdr searchq-prompt-animation)
           searchq-prompt-animation (append
-                                   searchq-prompt-animation
-                                   (list char)))))
+                                    searchq-prompt-animation
+                                    (list char)))))
 
 (defun searchq-start-prompt ()
   "[internal use]
@@ -300,18 +305,18 @@ Stop prompt animation."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Task API for Backends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun search:chain (&rest tasks)
+(defun searchq:chain (&rest tasks)
   "[backend api]
 Chain the TASKS."
   (mapc 'searchq-append-task tasks)
   (searchq-start-dequeue)
   nil)
 
-(defmacro search:lambda (&rest body)
+(defmacro searchq:lambda (&rest body)
   "[backend api]
 Create a search task wrapping FUNC which is a lambda function."
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  ;; (search:lambda
+  ;; (searchq:lambda
   ;;   (message "123"))
   ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   (declare (doc-string 2) (indent defun) (debug t))
@@ -320,29 +325,29 @@ Create a search task wrapping FUNC which is a lambda function."
     (lambda ()
       (condition-case err
           (progn ,@body)
-        (error (message "search:lambda | error: %s"
+        (error (message "searchq:lambda | error: %s"
                         (error-message-string err)))))
     ;; Synchronous.
     nil))
 
-(defmacro search:lambda-to-searchq-buffer (&rest body)
+(defmacro searchq:lambda-to-searchq-buffer (&rest body)
   "[backend api]
 Create a search task wrapping FUNC under `searchq-buffer'."
   (declare (doc-string 2) (indent defun) (debug t))
-  `(search:lambda
+  `(searchq:lambda
      (searchq-with-searchq-buffer
        (condition-case err
            (save-excursion
              ,@body)
-         (error (message "search:lambda-to-searchq-buffer | error: %s"
+         (error (message "searchq:lambda-to-searchq-buffer | error: %s"
                          (error-message-string err)))))))
 
-(defun search:process-shell (command bufname &optional callback)
+(defun searchq:process-shell (command bufname &optional callback)
   "[backend api]
 Create a search task wrapping `start-process-shell-command' with COMMAND.
 The output will be dumpped to a BUFNAME buffer which will be deleted when done.
 The CALLBACK is evaluated under process's buffer.
-See `search:process-shell-to-file' or `search:process-shell-to-searchq-buffer'
+See `searchq:process-shell-to-file' or `searchq:process-shell-to-searchq-buffer'
 for example."
   (searchq-create-task
    ;; Function.
@@ -356,7 +361,7 @@ for example."
          (and (process-live-p searchq-proc)
               (setq searchq-proc (delete-process searchq-proc)))
          (setq searchq-proc (start-process-shell-command
-                            "*searchq-proc*" buf ,command))
+                             "*searchq-proc*" buf ,command))
          (set-process-sentinel
           searchq-proc
           (lambda (proc event)
@@ -364,49 +369,49 @@ for example."
               (condition-case err
                   ,(and (functionp callback)
                         `(funcall ,callback))
-                (error (message "search:process-shell | error: %s"
+                (error (message "searchq:process-shell | error: %s"
                                 (error-message-string err))))
               ;; Kill buffer if it is a temporary buffer.
               (and (string= searchq-temp-buffer-name
                             (buffer-name))
                    (kill-buffer)))
-            (searchq-setup-doer))))))
+            (searchq-delay-doer))))))
    ;; Asynchronous.
    t))
 
-(defun search:process-shell-to-file (command filename)
+(defun searchq:process-shell-to-file (command filename)
   "[backend api]
 Create a search task wrapping `start-process-shell-command' with COMMAND.
 The output will be written to FILENAME file."
-  (search:process-shell
-    command (file-name-nondirectory filename)
-    (eval `(lambda ()
-             ;; Prepend the content if file is alreay existed.
-             (when (file-exists-p ,filename)
-               (goto-char (point-min))
-               (insert-file-contents-literally))
-             (setq buffer-file-name ,filename)
-             (save-buffer)
-             (kill-buffer)))))
+  (searchq:process-shell
+   command (file-name-nondirectory filename)
+   (eval `(lambda ()
+            ;; Prepend the content if file is alreay existed.
+            (when (file-exists-p ,filename)
+              (goto-char (point-min))
+              (insert-file-contents-literally))
+            (setq buffer-file-name ,filename)
+            (save-buffer)
+            (kill-buffer)))))
 
-(defun search:process-shell-to-searchq-buffer (command)
+(defun searchq:process-shell-to-searchq-buffer (command)
   "[backend api]
 Create a search task wrapping `start-process-shell-command' with COMMAND.
 The output will be dumpped directly to the `searchq-buffer'."
-  (search:process-shell
-    command searchq-buffer-name
-    (lambda ()
-      (setq buffer-file-name (expand-file-name searchq-saved-file)))))
+  (searchq:process-shell
+   command searchq-buffer-name
+   (lambda ()
+     (setq buffer-file-name (expand-file-name searchq-saved-file)))))
 
 (defvar searchq-clean-temp-file-task
-  (search:lambda
+  (searchq:lambda
     (and (file-exists-p searchq-temp-file)
          (delete-file searchq-temp-file)))
   "[backend api]
 Search task to clean temporary file.")
 
 (defvar searchq-print-closed-delimiter
-  (search:lambda-to-searchq-buffer
+  (searchq:lambda-to-searchq-buffer
     (setq searchq-tasks-count (1- searchq-tasks-count))
     (goto-char (point-max))
     (unless (looking-back "[\r\n]")
@@ -418,7 +423,7 @@ Search task to print closed delimiter.")
 
 ;; !important! The last search task.
 (defvar searchq-destructor-task
-  (search:lambda
+  (searchq:lambda
     ;; Stop prompt.
     (searchq-stop-prompt)
     ;; Reset counter.
@@ -468,11 +473,11 @@ Search thing by using GREP."
          (files (plist-get args :files))
          (fromfile (plist-get args :fromfile)))
     (eval
-     `(search:chain
+     `(searchq:chain
        ;; Prepare input file.
        ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,(when files
-          `(search:lambda
+          `(searchq:lambda
              (with-temp-file searchq-temp-file
                (mapc (lambda (path)
                        (and (file-exists-p path)
@@ -480,7 +485,7 @@ Search thing by using GREP."
                      ,files))))
        ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,@(mapcar (lambda (path)
-                   `(search:process-shell-to-file
+                   `(searchq:process-shell-to-file
                      ,(format "find %s %s 2>/dev/null"
                               (expand-file-name path)
                               (searchq-gen-find-filter include exclude))
@@ -488,12 +493,12 @@ Search thing by using GREP."
                  real-dirs)
        ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,(when fromfile
-          `(search:lambda
+          `(searchq:lambda
              (with-current-buffer (find-file-noselect searchq-temp-file)
                (insert "\n")
                (insert-file-contents-literally ,fromfile))))
        ;; Start to search by using input file.
-       (search:process-shell-to-searchq-buffer
+       (searchq:process-shell-to-searchq-buffer
         ,(format "xargs grep -nH -e \"%s\" <\"%s\" 2>/dev/null"
                  match
                  (expand-file-name searchq-temp-file)))))))
@@ -543,31 +548,31 @@ Search thing by using ACK."
          (files (plist-get args :files))
          (fromfile (plist-get args :fromfile)))
     (eval
-     `(search:chain
+     `(searchq:chain
        ;; Prepare input file.
        ;; FILES part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,(when files
-          `(search:lambda
+          `(searchq:lambda
              (with-temp-file searchq-temp-file
                (mapc (lambda (path)
                        (insert path "\n"))
                      ,files))))
        ;; DIRS part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ;; ,(when dirs
-       ;;    `(search:lambda
+       ;;    `(searchq:lambda
        ;;       (with-current-buffer (find-file-noselect searchq-temp-file)
        ;;         (mapc (lambda (path)
        ;;                 (and (file-exists-p path)
        ;;                      (insert (expand-file-name path) "\n")))
        ;;               ,dirs)))
-       ;;    `(search:process-shell-to-file
+       ;;    `(searchq:process-shell-to-file
        ;;      ,(format "xargs ack -f %s <%s"
        ;;               (searchq-gen-ack-filter include exclude)
        ;;               (expand-file-name searchq-temp-file))
        ;;      searchq-temp-file))
        ;; TODO: improve speed
        ,@(mapcar (lambda (path)
-                   `(search:process-shell-to-file
+                   `(searchq:process-shell-to-file
                      ,(format "ack -f %s %s"
                               (searchq-gen-ack-filter include exclude)
                               (expand-file-name path))
@@ -575,12 +580,12 @@ Search thing by using ACK."
                  real-dirs)
        ;; FROMFILE part ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        ,(when fromfile
-          `(search:lambda
+          `(searchq:lambda
              (with-current-buffer (find-file-noselect searchq-temp-file)
                (insert "\n")
                (insert-file-contents-literally ,fromfile))))
        ;; Start to search by using input file.
-       (search:process-shell-to-searchq-buffer
+       (searchq:process-shell-to-searchq-buffer
         ,(format "xargs ack --nocolor \"%s\" <\"%s\" 2>/dev/null"
                  match
                  (expand-file-name searchq-temp-file)))))))
@@ -596,11 +601,11 @@ Search thing by using AG."
          (files (plist-get args :files))
          (fromfile (plist-get args :fromfile)))
     (eval
-     `(search:chain
+     `(searchq:chain
        ))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Public API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Public & Interactive API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;###autoload
 (defun searchq-search (match &rest args)
@@ -633,7 +638,7 @@ Example
 "
   (interactive
    (let* ((match (read-from-minibuffer
-                  "Search: "
+                  "Searchq: "
                   (let ((bounds (bounds-of-thing-at-point 'symbol)))
                     (and bounds (buffer-substring-no-properties (car bounds)
                                                                 (cdr bounds))))))
@@ -657,17 +662,17 @@ Example
             (searchq-prepare-searchq-buffer)
             (funcall searchq-start-action-function)
             ;; Start searching.
-            (search:chain
+            (searchq:chain
              searchq-clean-temp-file-task
              ;; Print opened delimiter.
-             (search:lambda-to-searchq-buffer
+             (searchq:lambda-to-searchq-buffer
                (goto-char (point-max))
                (insert (car searchq-delimiter) ,match "\n")))
             ;; Delegate to `searchq-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             (funcall (nth 3 searchq-backends)
                      ',(append (list :match match) args))
             ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            (search:chain
+            (searchq:chain
              searchq-clean-temp-file-task
              searchq-print-closed-delimiter)))
       (message
@@ -707,14 +712,14 @@ Example
     (searchq-prepare-searchq-buffer)
     (funcall searchq-start-action-function)
     ;; Start searching.
-    (search:chain
+    (searchq:chain
      ;; Print opened delimiter.
      (eval
-      `(search:lambda-to-searchq-buffer
+      `(searchq:lambda-to-searchq-buffer
          (goto-char (point-max))
          (insert (car searchq-delimiter) ,(or thing cmd) "\n")))
      ;; Delegate to `searchq-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     (search:process-shell-to-searchq-buffer cmd)
+     (searchq:process-shell-to-searchq-buffer cmd)
      ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
      searchq-print-closed-delimiter)))
 
@@ -762,9 +767,9 @@ Example
   :group 'search)
 
 (defcustom searchq-result-mode-hook `(save-place-find-file-hook
-                                     font-lock-mode
-                                     linum-mode
-                                     hl-line-mode)
+                                      font-lock-mode
+                                      linum-mode
+                                      hl-line-mode)
   "Hook run when entering `searchq-result-mode' mode."
   :type 'hook
   :group 'searchq-result)

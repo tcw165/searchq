@@ -92,7 +92,9 @@
                        (function :tag "Backend Function")))
   :group 'searchq)
 
-(defcustom searchq-ignored-paths-for-find-command '("*.git*" "*.svn*")
+(defcustom searchq-ignored-paths-for-find-command '("*.git*"
+                                                    "*.svn*"
+                                                    "*build*")
   "Ignored paths for FIND command."
   :type '(repeat string)
   :group 'searchq)
@@ -639,7 +641,9 @@ Example
   (interactive
    (let* ((match (read-from-minibuffer
                   "Searchq: "
-                  (let ((bounds (bounds-of-thing-at-point 'symbol)))
+                  (let ((bounds (if (region-active-p)
+                                    (cons (region-beginning) (region-end))
+                                  (bounds-of-thing-at-point 'symbol))))
                     (and bounds (buffer-substring-no-properties (car bounds)
                                                                 (cdr bounds))))))
           (path (expand-file-name

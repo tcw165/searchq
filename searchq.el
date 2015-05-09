@@ -92,10 +92,20 @@
                        (function :tag "Backend Function")))
   :group 'searchq)
 
-(defcustom searchq-ignored-paths-for-find-command '("*.git*"
+(defcustom searchq-ignored-paths-for-find-command `("*.git*"
                                                     "*.svn*"
                                                     "*build*")
   "Ignored paths for FIND command."
+  :type '(repeat string)
+  :group 'searchq)
+
+(defcustom searchq-string-history `("\\$\\(.*\\)")
+  "Your favorite search string history"
+  :type '(repeat string)
+  :group 'searchq)
+
+(defcustom searchq-file-history `((expand-file-name "~/"))
+  "Your favorite search file/directory history"
   :type '(repeat string)
   :group 'searchq)
 
@@ -198,16 +208,16 @@ Prepare search buffer."
             searchq-saved-file
             nil nil nil t)))))
 
-(defun searchq-create-task (func async)
+(defun searchq-create-task (fn is-async-fn)
   "[internal use]
-Create a search task with FUNC function and ASYNC boolean."
-  (list :func func
-        :async async))
+Create a search task with FN function and IS-ASYNC-FN boolean."
+  (list :fn fn
+        :is-async-fn is-async-fn))
 
 (defun searchq-task-p (task)
   "[internal use]
 Test if the TASK is a valid search task."
-  (plist-get task :func))
+  (plist-get task :fn))
 
 (defun searchq-append-task (task)
   "[internal use]
@@ -232,7 +242,7 @@ Switch to search buffer."
   "[internal use]
 Doer decide when and what to process next."
   (let* ((task (car searchq-tasks))
-         (func (plist-get task :func)))
+         (func (plist-get task :fn)))
     (pop searchq-tasks)
     ;; Execute current task.
     (condition-case err
@@ -243,7 +253,7 @@ Doer decide when and what to process next."
     ;; Find next task.
     (when searchq-tasks
       (cond
-       ((null (plist-get task :async))
+       ((null (plist-get task :is-async-fn))
         (searchq-delay-doer))))))
 
 (defun searchq-delay-doer ()
@@ -501,7 +511,7 @@ Search thing by using GREP."
                (insert-file-contents-literally ,fromfile))))
        ;; Start to search by using input file.
        (searchq:process-shell-to-searchq-buffer
-        ,(format "xargs grep -nH -e \"%s\" <\"%s\" 2>/dev/null"
+        ,(format "xargs grep -nHE '%s' <'%s' 2>/dev/null"
                  match
                  (expand-file-name searchq-temp-file)))))))
 
@@ -640,17 +650,20 @@ Example
 "
   (interactive
    (let* ((match (read-from-minibuffer
-                  "Searchq: "
+                  "Searchq Regex Search: "
                   (let ((bounds (if (region-active-p)
                                     (cons (region-beginning) (region-end))
                                   (bounds-of-thing-at-point 'symbol))))
-                    (and bounds (buffer-substring-no-properties (car bounds)
-                                                                (cdr bounds))))))
+                    (and bounds
+                         (buffer-substring-no-properties (car bounds)
+                                                         (cdr bounds))))
+                  nil nil 'searchq-string-history))
           (path (expand-file-name
                  ;; TODO: read file or directory name.
                  ;; TODO: history.
                  (ido-read-directory-name
-                  (format "Search %s in: " match)))))
+                  (format "Search %s in: " match)
+                  (car searchq-file-history) nil t))))
      (cond
       ((file-regular-p path)
        (list match :files `(,path)))
@@ -757,7 +770,7 @@ Example
   (interactive)
   ;; Kill asynchronous tasks and let synchronous tasks continue.
   (dolist (task searchq-tasks)
-    (and (plist-get task :async)
+    (and (plist-get task :is-async-fn)
          (setq searchq-tasks (delq task searchq-tasks))))
   ;; Stop async process.
   (when (process-live-p searchq-proc)

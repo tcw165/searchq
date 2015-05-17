@@ -655,8 +655,9 @@ Example
                                     (cons (region-beginning) (region-end))
                                   (bounds-of-thing-at-point 'symbol))))
                     (and bounds
-                         (buffer-substring-no-properties (car bounds)
-                                                         (cdr bounds))))
+                         (regexp-quote
+                          (buffer-substring-no-properties (car bounds)
+                                                         (cdr bounds)))))
                   nil nil 'searchq-string-history))
           (path (expand-file-name
                  ;; TODO: read file or directory name.

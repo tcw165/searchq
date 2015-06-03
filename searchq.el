@@ -686,7 +686,7 @@ Example
              (searchq:lambda-to-searchq-buffer
                (goto-char (point-max))
                (insert (car searchq-delimiter) ,match "\n")))
-            ;; Delegate to `searchq-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ;; Delegate to `searchq-backends' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             (funcall (nth 3 searchq-backends)
                      ',(append (list :match match) args))
             ;; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

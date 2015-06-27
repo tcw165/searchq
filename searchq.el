@@ -104,7 +104,7 @@
   :type '(repeat string)
   :group 'searchq)
 
-(defcustom searchq-file-history `((expand-file-name "~/"))
+(defcustom searchq-file-history `(,(expand-file-name "~/"))
   "Your favorite search file/directory history"
   :type '(repeat string)
   :group 'searchq)
@@ -662,9 +662,9 @@ Example
           (path (expand-file-name
                  ;; TODO: read file or directory name.
                  ;; TODO: history.
-                 (ido-read-directory-name
+                 (read-directory-name
                   (format "Search %s in: " match)
-                  (car searchq-file-history) nil t))))
+                  (car searchq-file-history)))))
      (cond
       ((file-regular-p path)
        (list match :files `(,path)))

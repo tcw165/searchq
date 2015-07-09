@@ -898,7 +898,15 @@ Delete item at point."
   "[internal use]
 Delete item block."
   (interactive)
-  (message "Constructing..."))
+  (save-excursion
+    (let ((beg (re-search-backward (car searchq-delimiter) nil t))
+          (end (re-search-forward (format "%s.*$" (cdr searchq-delimiter)) nil t)))
+      (when (and beg end)
+        (setq end (progn
+                    (forward-char)
+                    (point)))
+        (delete-region beg end)
+        (and (buffer-modified-p) (save-buffer))))))
 
 (defun searchq-result-find-file ()
   "[internal use]

@@ -35,7 +35,7 @@
 ;; * Improve interaction of `searchq-search' and `searchq-search-command'.
 ;; * Cancel individual search task.
 ;; * Open with searchq-result will cause hl-highlight-mode work incorrectly.
-;; 
+;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ;;; Change Log:
@@ -121,7 +121,7 @@
   :group 'searchq)
 
 (defcustom searchq-temp-file (expand-file-name "/var/tmp/.searchq-tmp")
-  "Temporary file for search. e.g. as an input file with context of listed 
+  "Temporary file for search. e.g. as an input file with context of listed
 files."
   :type 'string
   :group 'searchq)
@@ -463,7 +463,7 @@ depends on the FIND's option, --path."
   (ignore-errors
     (let (icmd xcmd)
       (setq exclude (append exclude searchq-ignored-paths-for-find-command))
-      
+
       (when include
         (mapc (lambda (exp)
                 (setq icmd (concat icmd " -path \"" exp "\"")))
@@ -519,7 +519,7 @@ Search thing by using GREP."
   "[internal use]
 Take INCLUDE and EXCLUDE arguments and generate ACK command string. The format
 depends on ACK's option,
---type-set=include:ext:??? for includes; 
+--type-set=include:ext:??? for includes;
 --type-set=exclude:ext:??? for excludes."
   ;; Sample ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ;; (searchq-gen-ack-filter nil nil)
@@ -621,7 +621,7 @@ Search thing by using AG."
 
 ;;;###autoload
 (defun searchq-search (match &rest args)
-  "Make a search task to search MATCH string or regular expression refer to 
+  "Make a search task to search MATCH string or regular expression refer to
 attributes ARGS. ARGS describes what files, or what directories to search.
 Search tasks is delegated to `searchq-backends'.
 
@@ -701,7 +701,7 @@ Example
 
 ;;;###autoload
 (defun searchq-search-command (cmd)
-  "Very similar to `searchq-search' but it takes CMD arguement and pass it to 
+  "Very similar to `searchq-search' but it takes CMD arguement and pass it to
 `searchq-backends' directly."
   (interactive
    (let* ((prompt "Search Command: ")
@@ -782,7 +782,7 @@ Example
 
 (defgroup searchq-result nil
   "Project result mode for .result file."
-  :group 'search)
+  :group 'searchq)
 
 (defcustom searchq-result-mode-hook `(save-place-find-file-hook
                                       font-lock-mode
@@ -798,9 +798,12 @@ Example
     ;; (define-key map [up] )
     ;; (define-key map [down] )
     (define-key map [return] 'searchq-result-find-file)
-    (define-key map [?q] 'searchq-toggle-result)
-    (define-key map [escape] 'searchq-toggle-result)
     (define-key map [?d] 'searchq-result-delete-item-atpt)
+    (define-key map [?D] 'searchq-result-delete-item-block)
+    (define-key map [?q] 'searchq-toggle-result)
+    (define-key map [?s] 'searchq-stop)
+    (define-key map [?S] 'searchq-stop-all)
+    (define-key map [escape] 'searchq-toggle-result)
     map)
   "[internal use]
 Keymap for `searchq-result-mode'.")
@@ -820,12 +823,12 @@ Keymap for `searchq-result-mode'.")
     ;; Case insensitive.
     nil)
   "[internal use]
-Font lock keywords for `searchq-result-mode'. See `font-lock-defaults' and 
+Font lock keywords for `searchq-result-mode'. See `font-lock-defaults' and
 `font-lock-keywords'.")
 
 (defun searchq-imenu-create-index ()
   "[internal use]
-Return imenu index for `searchq-result-mode'. See `imenu--index-alist' for the 
+Return imenu index for `searchq-result-mode'. See `imenu--index-alist' for the
 format of the buffer index alist."
   ;; (when (and (string= (buffer-name) searchq-buffer-name)
   ;;            (not (searchq-running?)))
@@ -849,26 +852,32 @@ Test valid item at point."
              (looking-at (regexp-quote (cdr searchq-delimiter)))
              (looking-at "$")))))
 
-(defun searchq-result-clean-empty-item ()
+(defun searchq-result-clean-empty-item (beg end)
   "[internal use]
 Delete invalid item."
   (save-excursion
-    (goto-char 1)
-    (while (re-search-forward (format "%s.*[\n\r]%s"
-                                      (regexp-quote (car searchq-delimiter))
-                                      (regexp-quote (cdr searchq-delimiter)))
-                              nil t)
-      (goto-char (match-beginning 0))
-      (delete-region (line-beginning-position 1)
-                     (line-beginning-position 4)))))
+    ;; Create end-mark so that the end position will be updated automatically
+    ;; by insert/delete.
+    (let ((end-mark (set-marker (copy-marker (mark-marker) t) end)))
+      (goto-char beg)
+      (while (and
+              (re-search-forward (format "%s.*[\n\r]%s"
+                                         (regexp-quote (car searchq-delimiter))
+                                         (regexp-quote (cdr searchq-delimiter)))
+                                 nil t)
+              (< (point) (marker-position end-mark)))
+        (goto-char (match-beginning 0))
+        (delete-region (line-beginning-position 1)
+                       (line-beginning-position 4))))))
 
 (defun searchq-result-delete-item-atpt ()
   "[internal use]
 Delete item at point."
   (interactive)
-  (if mark-active
+  (if (region-active-p)
+      ;; Create end-mark so that the end position will be updated automatically
+      ;; by insert/delete.
       (let ((end-mark (set-marker (copy-marker (mark-marker) t) (region-end))))
-        ;; TODO: Large region slows very much.
         (goto-char (region-beginning))
         (beginning-of-line)
         (setq mark-active nil)
@@ -881,7 +890,15 @@ Delete item at point."
     (and (searchq-result-is-valid-item)
          (delete-region (line-beginning-position 1)
                         (line-beginning-position 2))))
+  (searchq-result-clean-empty-item (line-beginning-position -2)
+                                   (line-end-position 3))
   (and (buffer-modified-p) (save-buffer)))
+
+(defun searchq-result-delete-item-block ()
+  "[internal use]
+Delete item block."
+  (interactive)
+  (message "Constructing..."))
 
 (defun searchq-result-find-file ()
   "[internal use]
@@ -899,7 +916,8 @@ Open search item."
        (
         )))
     ;; Open file if any.
-    (when (file-exists-p file)
+    (when (and (stringp file)
+               (file-exists-p file))
       (find-file file)
       (goto-char 1)
       (forward-line (1- linum))
@@ -909,15 +927,14 @@ Open search item."
 ;;;###autoload
 (define-derived-mode searchq-result-mode nil "Searchq-Result"
   "Major mode for search buffers."
-  :group 'result-group
+  :group 'searchq-result
   (remove-overlays)
   (setq font-lock-defaults searchq-result-mode-font-lock-keywords
         truncate-lines t)
   ;; Set local imenu generator.
   (setq-local imenu-create-index-function 'searchq-imenu-create-index)
   ;; Rename buffer to `searchq-buffer-name'
-  (rename-buffer searchq-buffer-name)
-  (add-hook 'before-save-hook 'searchq-result-clean-empty-item nil t))
+  (rename-buffer searchq-buffer-name))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Faces ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -927,7 +944,7 @@ Open search item."
   :group 'searchq-result)
 
 (defface searchq-file-face
-  '((t (:foreground "blue" :underline t :weight bold)))
+  '((t (:inherit font-lock-builtin-face :underline t :weight bold)))
   "Default face for file path. Suggest no background, which will be overridden
 by `hl-line-mode' or `global-hl-line-mode'."
   :group 'searchq-result-face)
@@ -961,6 +978,9 @@ by `hl-line-mode' or `global-hl-line-mode'."
   (define-key-after tool-bar-map [searchq-search]
     '(menu-item "Search Thing" searchq-search
                 :image (find-image '((:type xpm :file "images/searchq-search.xpm"))))))
+
+;; `kill-eamcs-hook'.
+(add-hook 'kill-emacs-hook 'searchq-stop-all)
 
 (provide 'searchq)
 ;;; searchq.el ends here

@@ -942,7 +942,11 @@ Open search item."
   ;; Set local imenu generator.
   (setq-local imenu-create-index-function 'searchq-imenu-create-index)
   ;; Rename buffer to `searchq-buffer-name'
-  (rename-buffer searchq-buffer-name))
+  (rename-buffer searchq-buffer-name)
+  ;; Try to enable `whereis-symbol-mode'.
+  (when (and (featurep 'whereis)
+             (null whereis-symbol-mode))
+    (whereis-symbol-mode 1)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Faces ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

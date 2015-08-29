@@ -787,7 +787,9 @@ Example
 (defcustom searchq-result-mode-hook `(save-place-find-file-hook
                                       font-lock-mode
                                       linum-mode
-                                      hl-line-mode)
+                                      hl-line-mode
+                                      ,(and (featurep 'whereis)
+                                            'whereis-symbol-mode))
   "Hook run when entering `searchq-result-mode' mode."
   :type 'hook
   :group 'searchq-result)
@@ -942,11 +944,7 @@ Open search item."
   ;; Set local imenu generator.
   (setq-local imenu-create-index-function 'searchq-imenu-create-index)
   ;; Rename buffer to `searchq-buffer-name'
-  (rename-buffer searchq-buffer-name)
-  ;; Try to enable `whereis-symbol-mode'.
-  (when (and (featurep 'whereis)
-             (null whereis-symbol-mode))
-    (whereis-symbol-mode 1)))
+  (rename-buffer searchq-buffer-name))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Faces ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
